@@ -170,6 +170,18 @@ def binance_connected():
     return db.get_setting("binance_conn", "") == "1"
 
 
+def _persist_api_fields():
+    """Force-save the API key/secret fields from the widgets to the DB.
+
+    On mobile the on_change save can miss the latest keystrokes if a button is
+    tapped before the field loses focus, so we persist explicitly on click."""
+    for k in ("binance_testnet_api", "binance_testnet_secret",
+              "binance_live_api", "binance_live_secret"):
+        v = st.session_state.get(f"w_{k}")
+        if v is not None:
+            db.save_setting(k, v)
+
+
 # ===========================================================================
 # TAB 1 — DASHBOARD
 # ===========================================================================
@@ -184,16 +196,32 @@ def tab_dashboard():
 
     # Section 1 — Account Health
     st.subheader("📊 Account Health")
-    if err:
-        st.warning(f"Binance not connected ({api_mode}): {err}")
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Live Balance", f"${equity:,.2f}")
-    c2.metric("Today PnL", f"${pnl:,.2f}", f"{pnl_pct:+.2f}%")
+
+    def _fmt_bal(v):
+        if v in ("", None):
+            return "— (no keys)"
+        if v == "ERR":
+            return "🔴 error"
+        try:
+            return f"${float(v):,.2f}"
+        except (TypeError, ValueError):
+            return "—"
+
+    test_bal = db.get_setting("last_equity_test", "")
+    live_bal = db.get_setting("last_equity_live", "")
+    b1, b2 = st.columns(2)
+    b1.metric("🧪 Test Balance", _fmt_bal(test_bal))
+    b2.metric("💰 Live Balance", _fmt_bal(live_bal))
+
+    c1, c2 = st.columns(2)
+    c1.metric("Today PnL", f"${pnl:,.2f}", f"{pnl_pct:+.2f}%")
     dd = max(0.0, 100.0 - health)
-    c3.metric("Drawdown", f"{dd:.1f}%")
+    c2.metric("Drawdown", f"{dd:.1f}%")
     emoji = {"green": "🟢", "yellow": "🟡", "orange": "🟠", "red": "🔴"}[color]
     st.progress(min(1.0, max(0.0, health / 100.0)),
                 text=f"{emoji} Health {health:.0f}% — {zone}")
+    if not test_bal and not live_bal:
+        st.caption("Add Binance API keys in ⚙️ Settings to see balances.")
 
     # Section 2 — API Mode Status
     st.subheader("🔀 API Mode")
@@ -600,7 +628,8 @@ def tab_settings():
         text("Testnet API Key", "binance_testnet_api", password=True)
         text("Testnet Secret", "binance_testnet_secret", password=True)
         _conn_badge("test")
-        if st.button("🔌 Test Testnet Connection"):
+        if st.button("🔌 Test / Save Testnet"):
+            _persist_api_fields()
             bc.reset_clients()
             ok, msg = bc.test_connection("test")
             db.save_setting("conn_test_ok", "1" if ok else "0")
@@ -610,18 +639,22 @@ def tab_settings():
         text("Live API Key", "binance_live_api", password=True)
         text("Live Secret", "binance_live_secret", password=True)
         _conn_badge("live")
-        if st.button("🔌 Test Live Connection"):
+        if st.button("🔌 Test / Save Live"):
+            _persist_api_fields()
             bc.reset_clients()
             ok, msg = bc.test_connection("real")
             db.save_setting("conn_live_ok", "1" if ok else "0")
             db.save_setting("conn_live_msg", msg)
             st.rerun()
-        if st.button("💾 Save API Keys"):
+        if st.button("💾 Save All API Keys"):
+            _persist_api_fields()
             bc.reset_clients()
-            mode = _global_api_mode()
-            ok, msg = bc.test_connection(mode)
-            db.save_setting("conn_test_ok" if mode == "test" else "conn_live_ok", "1" if ok else "0")
-            db.save_setting("conn_test_msg" if mode == "test" else "conn_live_msg", msg)
+            for mode, ok_key, msg_key in (("test", "conn_test_ok", "conn_test_msg"),
+                                          ("real", "conn_live_ok", "conn_live_msg")):
+                if bc.has_credentials(mode):
+                    ok, msg = bc.test_connection(mode)
+                    db.save_setting(ok_key, "1" if ok else "0")
+                    db.save_setting(msg_key, msg)
             tg.send_config_report()
             st.rerun()
 

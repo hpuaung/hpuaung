@@ -350,6 +350,16 @@ def _update_snapshot(equity, equity_mode, pairs):
         db.save_setting("last_equity", f"{equity:.4f}")
         db.save_setting("snapshot_ts", db.utcnow_str())
 
+        # Read BOTH balances (test + live) for the dashboard, when keys exist.
+        for mode, store_key in (("test", "last_equity_test"), ("real", "last_equity_live")):
+            if bc.has_credentials(mode):
+                try:
+                    db.save_setting(store_key, f"{bc.get_equity(mode):.4f}")
+                except Exception:  # noqa: BLE001
+                    db.save_setting(store_key, "ERR")
+            else:
+                db.save_setting(store_key, "")
+
         # Prices for every open position (+ first selected pair for context).
         syms = {p["symbol"] for p in db.get_open_positions()}
         if pairs:

@@ -49,6 +49,12 @@ def _credentials(api_mode):
             db.get_setting("binance_testnet_secret", ""))
 
 
+def has_credentials(api_mode):
+    """True only if BOTH key and secret are present for the mode."""
+    key, secret = _credentials(api_mode)
+    return bool(key) and bool(secret)
+
+
 def get_client(api_mode="test") -> Client:
     """Return a cached Binance client for the given mode ('test'/'real')."""
     with _clients_lock:
