@@ -123,7 +123,9 @@ def execute_order(symbol, strategy, signal, *, equity, multiplier, api_mode,
     entry = sized["entry"]
     fees_estimated = entry * qty * TAKER_FEE * 2  # round trip estimate
 
-    partial_tp = db.get_bool(f"{strategy}_partial_tp", True)
+    # Partial TP only applies in Auto TP/SL mode; manual mode is a single target.
+    partial_tp = db.get_bool(f"{strategy}_partial_tp", True) and db.get_bool(f"{strategy}_auto_tpsl", True)
+    trail_auto = 1 if db.get_bool(f"{strategy}_trail_auto", False) else 0
     tf = db.get_setting(f"{strategy}_timeframe", "5m")
     atr_at_entry = float(signal.get("atr", 0.0)) if signal.get("atr") else 0.0
 
@@ -142,6 +144,7 @@ def execute_order(symbol, strategy, signal, *, equity, multiplier, api_mode,
         "leverage": sized["eff_lev"],
         "timeframe": tf,
         "atr_at_entry": atr_at_entry,
+        "trailing_active": trail_auto,
         "paper_mode": 1 if paper_mode else 0,
         "order_id": "",
         "health_at_entry": health,

@@ -398,10 +398,16 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
 
     # Section 2 — Timeframe
     st.divider()
-    st.subheader("⏱️ Timeframe (Multi-TF)")
-    tf_buttons("Entry TF", f"{strategy}_timeframe", entry_opts, db.get_setting(f"{strategy}_timeframe"))
-    tf_buttons("Confirm TF", f"{strategy}_confirm_tf", confirm_opts, db.get_setting(f"{strategy}_confirm_tf"))
-    tf_buttons("Trend TF", f"{strategy}_trend_tf", trend_opts, db.get_setting(f"{strategy}_trend_tf"))
+    st.subheader("⏱️ Timeframe")
+    auto_tf = bool_toggle("🤖 Auto Timeframe (bot decides)", f"{strategy}_auto_tf", True)
+    if auto_tf:
+        preset = "Entry 5m · Confirm 15m · Trend 1h" if strategy == "scalping" \
+                 else "Entry 4h · Confirm 1d · Trend 3d"
+        st.caption(f"Bot auto → {preset}")
+    else:
+        tf_buttons("Entry TF", f"{strategy}_timeframe", entry_opts, db.get_setting(f"{strategy}_timeframe"))
+        tf_buttons("Confirm TF", f"{strategy}_confirm_tf", confirm_opts, db.get_setting(f"{strategy}_confirm_tf"))
+        tf_buttons("Trend TF", f"{strategy}_trend_tf", trend_opts, db.get_setting(f"{strategy}_trend_tf"))
     bool_toggle("MTF Filter", f"{strategy}_mtf_filter", True)
 
     # Section 3 — Strategy Mix
@@ -456,38 +462,32 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
         else:
             st.success(f"✅ Lev×Risk {base_lev*base_risk:.1f}% ≤ hard cap {cap:.0f}%")
 
-    # Section 6 — Fee Display
+    # Section 6 — Take Profit / Stop Loss
     st.divider()
-    st.subheader("💸 Fee Impact (Taker 0.04%, round-trip 0.08%)")
-    tp1 = db.get_float(f"{strategy}_tp1_pct", 1.5)
-    sl = db.get_float(f"{strategy}_sl_pct", 0.8)
-    net_tp = tp1 - 0.08
-    net_sl = sl + 0.08
-    rr = (net_tp / net_sl) if net_sl else 0.0
-    fc = st.columns(3)
-    fc[0].metric("Net TP1", f"{net_tp:.2f}%")
-    fc[1].metric("Net SL", f"{net_sl:.2f}%")
-    fc[2].metric("Real R:R", f"1:{rr:.2f}")
-
-    # Section 7 — Partial TP
-    st.divider()
-    st.subheader("🎯 Partial Take Profit")
-    bool_toggle("Partial TP", f"{strategy}_partial_tp", True)
-    slider("TP1 %", f"{strategy}_tp1_pct", 0.2, 10.0, 0.1, db.get_float(f"{strategy}_tp1_pct"))
-    slider("TP1 Close %", f"{strategy}_tp1_close_pct", 10, 100, 5, db.get_int(f"{strategy}_tp1_close_pct"), is_int=True)
-    slider("TP2 %", f"{strategy}_tp2_pct", 0.2, 15.0, 0.1, db.get_float(f"{strategy}_tp2_pct"))
-    slider("TP2 Close %", f"{strategy}_tp2_close_pct", 10, 100, 5, db.get_int(f"{strategy}_tp2_close_pct"), is_int=True)
-    slider("TP3 %", f"{strategy}_tp3_pct", 0.2, 20.0, 0.1, db.get_float(f"{strategy}_tp3_pct"))
-    slider("TP3 Close %", f"{strategy}_tp3_close_pct", 10, 100, 5, db.get_int(f"{strategy}_tp3_close_pct"), is_int=True)
-    slider("SL %", f"{strategy}_sl_pct", 0.1, 10.0, 0.1, db.get_float(f"{strategy}_sl_pct"))
+    st.subheader("🎯 Take Profit / Stop Loss")
+    auto_tpsl = bool_toggle("🤖 Auto TP/SL (ATR-based)", f"{strategy}_auto_tpsl", True)
+    if auto_tpsl:
+        st.caption("Bot sets TP1/TP2/TP3 & SL automatically from market volatility "
+                   "(ATR), with partial closes at 50/30/20%.")
+    else:
+        tp_pct = slider("TP %", f"{strategy}_tp_pct", 0.2, 20.0, 0.1,
+                        db.get_float(f"{strategy}_tp_pct", 1.5 if strategy == "scalping" else 4.0))
+        sl_pct = slider("SL %", f"{strategy}_sl_pct", 0.1, 10.0, 0.1, db.get_float(f"{strategy}_sl_pct"))
+        net_tp = tp_pct - 0.08
+        net_sl = sl_pct + 0.08
+        rr = (net_tp / net_sl) if net_sl else 0.0
+        st.caption(f"After 0.08% round-trip fee → Net TP {net_tp:.2f}% / Net SL {net_sl:.2f}% "
+                   f"| Real R:R 1:{rr:.2f}")
     bool_toggle("Auto Break-Even on TP1", f"{strategy}_auto_be", True)
+
+    # Trailing stop
+    trail_on = bool_toggle("📉 Trailing SL", f"{strategy}_trail_auto", False)
+    if trail_on:
+        slider("Trailing distance %", f"{strategy}_trail_pct", 0.2, 5.0, 0.1,
+               db.get_float(f"{strategy}_trail_pct", 1.5 if strategy == "swing" else 0.5))
 
     # Swing extras
     if swing:
-        st.divider()
-        st.subheader("🪝 Swing Specific")
-        slider("Trailing Stop Distance %", "swing_trail_pct", 0.5, 5.0, 0.1,
-               db.get_float("swing_trail_pct", 1.5))
         slider("Max Hold Days", "swing_max_hold_days", 1, 30, 1,
                db.get_int("swing_max_hold_days", 7), is_int=True)
 

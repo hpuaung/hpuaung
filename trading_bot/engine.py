@@ -30,10 +30,20 @@ _last_daily_report = {"date": ""}
 # ---------------------------------------------------------------------------
 # Aggregator for a single pair + engine
 # ---------------------------------------------------------------------------
+def _effective_tfs(strategy):
+    """Return (entry, confirm, trend) timeframes. When Auto Timeframe is on the
+    bot uses sensible presets so the user never has to tune them."""
+    if db.get_bool(f"{strategy}_auto_tf", True):
+        if strategy == "scalping":
+            return "5m", "15m", "1h"
+        return "4h", "1d", "3d"
+    return (db.get_setting(f"{strategy}_timeframe", "5m"),
+            db.get_setting(f"{strategy}_confirm_tf", "15m"),
+            db.get_setting(f"{strategy}_trend_tf", "1h"))
+
+
 def _gather_indicator_frames(symbol, strategy, api_mode):
-    entry_tf = db.get_setting(f"{strategy}_timeframe", "5m")
-    confirm_tf = db.get_setting(f"{strategy}_confirm_tf", "15m")
-    trend_tf = db.get_setting(f"{strategy}_trend_tf", "1h")
+    entry_tf, confirm_tf, trend_tf = _effective_tfs(strategy)
 
     df_entry = indicators.compute_indicators(bc.get_ohlcv(symbol, entry_tf, api_mode=api_mode))
     df_confirm = df_trend = None
@@ -180,6 +190,21 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health):
 
     # Attach ATR for AI sizing fidelity.
     signal["atr"] = indicators.safe(df_entry.get("atr"))
+
+    # Manual TP/SL override: when Auto TP/SL is off, use the single TP%/SL%
+    # sliders (one target) instead of the strategy's structure/ATR levels.
+    if not db.get_bool(f"{strategy}_auto_tpsl", True):
+        entry = float(signal["entry"])
+        tp_pct = db.get_float(f"{strategy}_tp_pct", 1.5)
+        sl_pct = db.get_float(f"{strategy}_sl_pct", 0.8)
+        if signal["signal"] == "BUY":
+            tp = entry * (1 + tp_pct / 100.0)
+            signal["sl"] = entry * (1 - sl_pct / 100.0)
+        else:
+            tp = entry * (1 - tp_pct / 100.0)
+            signal["sl"] = entry * (1 + sl_pct / 100.0)
+        signal["tp1"] = signal["tp2"] = signal["tp3"] = tp
+
     session = _current_session()
 
     pos_id = orders.execute_order(

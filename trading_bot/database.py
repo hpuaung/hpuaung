@@ -557,6 +557,17 @@ DEFAULTS = {
     "notify_risk_alert": "1",
     "notify_engine_stop": "1",
 
+    # Simplified Auto controls (timeframe + TP/SL + trailing)
+    "scalping_auto_tf": "1",
+    "swing_auto_tf": "1",
+    "scalping_auto_tpsl": "1",
+    "swing_auto_tpsl": "1",
+    "scalping_tp_pct": "1.5",
+    "swing_tp_pct": "4.0",
+    "scalping_trail_auto": "0",
+    "swing_trail_auto": "0",
+    "scalping_trail_pct": "0.5",
+
     # Runtime/internal flags
     "blackout_active": "0",
     "win_streak": "0",
