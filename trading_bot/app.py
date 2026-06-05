@@ -10,6 +10,7 @@ thread — so a Streamlit rerun never restarts or disturbs trading.
 
 import io
 import csv
+import json
 from datetime import datetime, timezone
 
 import streamlit as st
@@ -120,20 +121,36 @@ def _global_api_mode():
     return "real" if not db.get_bool("paper_trading_mode", True) else "test"
 
 
-@st.cache_data(ttl=15)
-def live_equity(api_mode):
+# The UI reads ONLY the engine's DB snapshot — it never calls Binance directly,
+# so the dashboard stays instant regardless of network/API latency.
+@st.cache_data(ttl=5)
+def _snapshot_prices():
     try:
-        return bc.get_equity(api_mode), None
-    except Exception as e:  # noqa: BLE001
-        return 0.0, str(e)
-
-
-@st.cache_data(ttl=10)
-def live_price(symbol, api_mode):
-    try:
-        return bc.get_price(symbol, api_mode)
+        return json.loads(db.get_setting("live_prices", "{}"))
     except Exception:  # noqa: BLE001
-        return 0.0
+        return {}
+
+
+@st.cache_data(ttl=5)
+def _snapshot_market():
+    try:
+        return json.loads(db.get_setting("live_market", "{}"))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def live_equity(api_mode=None):
+    """Return (equity, error_or_None) from the engine's DB snapshot."""
+    eq = db.get_float("last_equity", 0.0)
+    if eq > 0:
+        return eq, None
+    if not db.get_setting("snapshot_ts", ""):
+        return 0.0, "Engine starting… snapshot pending (refresh in ~30s)"
+    return 0.0, "Equity 0 — add Binance API keys in ⚙️ Settings"
+
+
+def live_price(symbol, api_mode=None):
+    return float(_snapshot_prices().get(symbol, 0.0) or 0.0)
 
 
 # ===========================================================================
@@ -348,6 +365,9 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
     if cols[0].button("▶ START", key=f"{strategy}_start"):
         db.save_setting(f"{strategy}_bot_on", "1")
         db.save_setting("emergency_stop", "0")
+        # Train the model lazily on first real start if AI hybrid is enabled.
+        if db.get_bool(f"{strategy}_hybrid_on") and lgbm.get_model() is None and not lgbm.is_training():
+            lgbm.train_in_background()
         st.rerun()
     if cols[1].button("⏸ PAUSE", key=f"{strategy}_pause"):
         db.save_setting(f"{strategy}_bot_on", "0")
@@ -482,20 +502,16 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
 
 
 def _market_context_display(strategy):
-    pairs = [p.strip() for p in db.get_setting("selected_pairs", "").split(",") if p.strip()]
-    if not pairs:
-        st.caption("Select pairs in Dashboard.")
+    market = _snapshot_market()
+    sym = market.get("symbol")
+    if not sym:
+        st.caption("Market context loads once the engine has run a cycle.")
         return
-    sym = pairs[0]
-    api_mode = db.get_setting(f"{strategy}_api_mode", "test")
-    try:
-        fr = bc.get_funding_rate(sym, api_mode)
-        oi = bc.get_oi_change_pct(sym, api_mode)
-        c = st.columns(2)
-        c[0].write(f"Funding ({sym}): {fr*100:.4f}% {'🟢' if fr<=0 else '🔴'}")
-        c[1].write(f"OI change: {oi:+.2f}% {'↑' if oi>=0 else '↓'}")
-    except Exception:  # noqa: BLE001
-        st.caption("Market context unavailable (connect API).")
+    fr = float(market.get("funding", 0.0))
+    oi = float(market.get("oi", 0.0))
+    c = st.columns(2)
+    c[0].write(f"Funding ({sym}): {fr*100:.4f}% {'🟢 Bullish' if fr<=0 else '🔴 Bearish'}")
+    c[1].write(f"OI change: {oi:+.2f}% {'↑' if oi>=0 else '↓'}")
 
 
 def _live_engine_trades(strategy, swing):

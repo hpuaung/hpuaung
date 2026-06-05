@@ -71,22 +71,23 @@ def _build_dataset(period, api_mode):
         if not indicators.has_enough(df, need=210):
             continue
         ind = indicators.compute_indicators(df)
-        closes = ind["close"].astype("float32").values
+        closes = ind["close"].to_numpy(dtype="float64")
         n = len(ind)
-        # Leave room for the 3-candle forward label; skip warm-up rows.
-        for i in range(210, n - 3):
-            row = ind.iloc[: i + 1]
-            feat = indicators.build_features(row)
-            future_return = closes[i + 3] / max(closes[i], 1e-9) - 1.0
-            if future_return > 0.01:
-                label = 2
-            elif future_return < -0.01:
-                label = 0
-            else:
-                label = 1
-            X.append(feat)
-            y.append(label)
-    return np.array(X, dtype="float32"), np.array(y, dtype="int8")
+        # Vectorised features for the whole frame (O(N), not O(N^2)).
+        feats = indicators.build_feature_matrix(ind)
+        # 3-candle forward return -> 3-class label.
+        future_return = closes[3:] / np.maximum(closes[:-3], 1e-9) - 1.0
+        labels = np.where(future_return > 0.01, 2,
+                          np.where(future_return < -0.01, 0, 1))
+        # Use warm-up..(n-3) rows so each has a valid forward label.
+        lo, hi = 210, n - 3
+        if hi > lo:
+            X.append(feats[lo:hi])
+            y.append(labels[lo:hi])
+    if not X:
+        return np.empty((0, 23), dtype="float32"), np.empty((0,), dtype="int8")
+    return (np.concatenate(X).astype("float32"),
+            np.concatenate(y).astype("int8"))
 
 
 def train_lgbm_model(period=None, api_mode=None):
@@ -156,8 +157,11 @@ def train_in_background(period=None, api_mode=None):
 
 
 def ensure_model_on_start():
-    """Load the model if present, otherwise start a background training run."""
+    """
+    Load the model if present. We deliberately do NOT auto-train on startup: on a
+    1GB single-core VPS that would steal CPU from the UI. The AI-hybrid strategy
+    falls back gracefully without a model, and the user can train on demand from
+    Settings → '🔄 RETRAIN NOW' (or training can be kicked when an engine starts).
+    """
     if os.path.exists(MODEL_PATH):
         get_model()
-    else:
-        train_in_background()

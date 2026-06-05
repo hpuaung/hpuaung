@@ -9,6 +9,7 @@ state, so a Streamlit rerun never disturbs this loop.
 """
 
 import time
+import json
 import threading
 from datetime import datetime, timezone
 
@@ -266,16 +267,18 @@ def engine_loop(stop_event=None):
 
 
 def _run_cycle():
+    # Determine the api mode for the equity read (prefer real if any engine real).
+    equity_mode = "real" if (db.get_setting("scalping_api_mode") == "real"
+                             or db.get_setting("swing_api_mode") == "real") else "test"
+
     # Emergency stop short-circuits everything except position monitoring.
     if db.get_bool("emergency_stop", False):
         position_manager.monitor_all(tg)
+        _update_snapshot(db.get_float("last_equity", 0.0), equity_mode, _selected_pairs())
         return
 
     paper_mode = db.get_bool("paper_trading_mode", True)
 
-    # Determine the api mode for the equity read (prefer real if any engine real).
-    equity_mode = "real" if (db.get_setting("scalping_api_mode") == "real"
-                             or db.get_setting("swing_api_mode") == "real") else "test"
     try:
         equity = bc.get_equity(equity_mode)
     except Exception as e:  # noqa: BLE001
@@ -303,6 +306,44 @@ def _run_cycle():
     # Always monitor open positions and check the daily report.
     position_manager.monitor_all(tg)
     _maybe_daily_report()
+
+    # Publish a snapshot to the DB so the UI never has to call Binance itself.
+    _update_snapshot(equity, equity_mode, _selected_pairs())
+
+
+def _update_snapshot(equity, equity_mode, pairs):
+    """
+    Write equity + live prices + first-pair market context into the settings
+    table. The Streamlit UI reads ONLY these (no direct Binance calls), which
+    keeps the dashboard instant regardless of network/API latency.
+    """
+    try:
+        db.save_setting("last_equity", f"{equity:.4f}")
+        db.save_setting("snapshot_ts", db.utcnow_str())
+
+        # Prices for every open position (+ first selected pair for context).
+        syms = {p["symbol"] for p in db.get_open_positions()}
+        if pairs:
+            syms.add(pairs[0])
+        prices = {}
+        for s in syms:
+            try:
+                prices[s] = bc.get_price(s, equity_mode)
+            except Exception:  # noqa: BLE001
+                pass
+        db.save_setting("live_prices", json.dumps(prices))
+
+        # Market context (funding / OI) for the first selected pair, best-effort.
+        if pairs:
+            try:
+                fr = bc.get_funding_rate(pairs[0], equity_mode)
+                oi = bc.get_oi_change_pct(pairs[0], equity_mode)
+                db.save_setting("live_market",
+                                json.dumps({"symbol": pairs[0], "funding": fr, "oi": oi}))
+            except Exception:  # noqa: BLE001
+                pass
+    except Exception as e:  # noqa: BLE001
+        db.log_event("SNAPSHOT_ERROR", str(e))
 
 
 def start_engine():

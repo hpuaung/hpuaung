@@ -260,6 +260,56 @@ def build_features(df_ind: pd.DataFrame, funding_rate=0.0, oi_change_pct=0.0,
     return np.array(features, dtype="float32")
 
 
+def build_feature_matrix(df_ind: pd.DataFrame) -> np.ndarray:
+    """
+    Vectorised feature matrix (N, 23) for training — equivalent to calling
+    build_features() on every row, but without per-row DataFrame slicing (so it
+    is O(N) instead of O(N^2)). Funding/OI/sentiment and the strategy-signal
+    features are 0 here, matching how the training set was originally built.
+    """
+    def col(name, default=0.0):
+        if name in df_ind:
+            return df_ind[name].to_numpy(dtype="float64", copy=False)
+        return np.full(len(df_ind), default)
+
+    close = col("close"); open_ = col("open"); high = col("high"); low = col("low")
+    rng = np.maximum(high - low, 1e-9)
+    ema8 = col("ema8", 1.0); ema21 = col("ema21", 1.0)
+    ema50 = col("ema50", 1.0); ema200 = col("ema200", 1.0)
+    bb_lower = col("bb_lower"); bb_upper = col("bb_upper"); bb_mid = col("bb_mid", 1.0)
+    bb_range = np.maximum(bb_upper - bb_lower, 1e-9)
+    vol = col("volume"); vol_ma = np.where(col("vol_ma", 1.0) == 0, 1e-9, col("vol_ma", 1.0))
+    atr = col("atr"); zeros = np.zeros(len(df_ind))
+
+    body = np.abs(close - open_)
+    upper_wick = high - np.maximum(close, open_)
+    lower_wick = np.minimum(close, open_) - low
+
+    cols = [
+        col("rsi", 50.0),
+        close / np.maximum(ema8, 1e-9),
+        close / np.maximum(ema21, 1e-9),
+        close / np.maximum(ema50, 1e-9),
+        close / np.maximum(ema200, 1e-9),
+        (close - bb_lower) / bb_range,
+        bb_range / np.maximum(bb_mid, 1e-9),
+        col("stoch_k", 50.0),
+        col("cci") / 100.0,
+        col("adx"),
+        col("macd_hist"),
+        col("supertrend_dir"),
+        atr / np.maximum(close, 1e-9),
+        vol / vol_ma,
+        zeros, zeros, zeros,                 # funding, oi, sentiment
+        body / rng,
+        upper_wick / rng,
+        lower_wick / rng,
+        zeros, zeros, zeros,                 # trend/reversion/breakout signals
+    ]
+    mat = np.column_stack(cols).astype("float32")
+    return np.nan_to_num(mat, nan=0.0, posinf=0.0, neginf=0.0)
+
+
 FEATURE_NAMES = [
     "rsi", "ema8_ratio", "ema21_ratio", "ema50_ratio", "ema200_ratio",
     "bb_position", "bb_width_ratio", "stoch_k", "cci_norm", "adx", "macd_hist",

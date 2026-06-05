@@ -90,7 +90,7 @@ def test_connection(api_mode="test"):
 # ---------------------------------------------------------------------------
 # Account equity (live, never hardcoded)
 # ---------------------------------------------------------------------------
-@with_retry()
+@with_retry(max_retries=2, base_delay=1)
 @rate_limited(weight=5)
 def get_equity(api_mode="test"):
     """Live total wallet balance in USDT from Binance Futures."""
@@ -99,7 +99,7 @@ def get_equity(api_mode="test"):
     return float(acct.get("totalWalletBalance", 0.0))
 
 
-@with_retry()
+@with_retry(max_retries=2, base_delay=1)
 @rate_limited(weight=5)
 def get_available_balance(api_mode="test"):
     client = get_client(api_mode)
@@ -151,7 +151,7 @@ def get_ohlcv(symbol, interval="5m", limit=DEFAULT_KLINES, api_mode="test") -> p
 # ---------------------------------------------------------------------------
 # Mark price / last price
 # ---------------------------------------------------------------------------
-@with_retry()
+@with_retry(max_retries=2, base_delay=1)
 @rate_limited(weight=1)
 def get_price(symbol, api_mode="test"):
     client = get_client(api_mode)
@@ -162,7 +162,7 @@ def get_price(symbol, api_mode="test"):
 # ---------------------------------------------------------------------------
 # Funding rate & open interest
 # ---------------------------------------------------------------------------
-@with_retry()
+@with_retry(max_retries=2, base_delay=1)
 @rate_limited(weight=1)
 def get_funding_rate(symbol, api_mode="test"):
     """Latest funding rate as a float (e.g. 0.0001 = 0.01%)."""
@@ -171,7 +171,7 @@ def get_funding_rate(symbol, api_mode="test"):
     return float(data.get("lastFundingRate", 0.0))
 
 
-@with_retry()
+@with_retry(max_retries=2, base_delay=1)
 @rate_limited(weight=1)
 def get_open_interest(symbol, api_mode="test"):
     client = get_client(api_mode)
