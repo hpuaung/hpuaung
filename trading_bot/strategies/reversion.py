@@ -27,14 +27,14 @@ def run(df_entry, df_confirm=None, df_trend=None, mtf=False):
     if df_confirm is not None and has_enough(df_confirm, need=60):
         confirm_rsi = safe(df_confirm.get("rsi"), default=50.0)
 
-    # Oversold BUY
+    # Oversold BUY (thresholds slightly relaxed so range markets actually fire)
     oversold = (
-        rsi <= 30
-        and close <= bb_lower
-        and stoch_k < 20
-        and cci < -100
-        and close < ema21 * 0.98
-        and (confirm_rsi is None or confirm_rsi <= 35)
+        rsi <= 35
+        and close <= bb_lower * 1.003
+        and stoch_k < 25
+        and cci < -80
+        and close < ema21 * 0.99
+        and (confirm_rsi is None or confirm_rsi <= 45)
     )
     if oversold:
         return {
@@ -46,14 +46,14 @@ def run(df_entry, df_confirm=None, df_trend=None, mtf=False):
             "tp3": bb_upper,
         }
 
-    # Overbought SELL
+    # Overbought SELL (mirrored, slightly relaxed)
     overbought = (
-        rsi >= 70
-        and close >= bb_upper
-        and stoch_k > 80
-        and cci > 100
-        and close > ema21 * 1.02
-        and (confirm_rsi is None or confirm_rsi >= 65)
+        rsi >= 65
+        and close >= bb_upper * 0.997
+        and stoch_k > 75
+        and cci > 80
+        and close > ema21 * 1.01
+        and (confirm_rsi is None or confirm_rsi >= 55)
     )
     if overbought:
         return {

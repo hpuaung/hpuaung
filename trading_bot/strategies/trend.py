@@ -40,7 +40,8 @@ def run(df_entry, df_confirm=None, df_trend=None, mtf=False):
     st_dir = safe(df_entry.get("supertrend_dir"))
     macd = safe(df_entry.get("macd"))
     macd_sig = safe(df_entry.get("macd_signal"))
-    near_ema21 = abs(close - ema21) / max(ema21, 1e-9) <= 0.005
+    # Pullback proximity to EMA21 (widened to 1.5% — a realistic entry zone).
+    near_ema21 = abs(close - ema21) / max(ema21, 1e-9) <= 0.015
 
     # Previous swing levels over last 20 candles.
     recent = df_entry.tail(20)
@@ -58,12 +59,14 @@ def run(df_entry, df_confirm=None, df_trend=None, mtf=False):
         trend_ok_bull = _ema_bull(df_trend)
         trend_ok_bear = _ema_bear(df_trend)
 
+    # NOTE: the strict "last 3 highs & lows ascending" check was dropped — it
+    # contradicted the EMA21 pullback requirement (a pullback dips recent
+    # candles), so the two could never be true together. Trend is now confirmed
+    # by EMA structure + ADX + Supertrend + MACD + MTF, entered on the pullback.
     bullish = (
         _ema_bull(df_entry)
-        and adx > 25
+        and adx > 20
         and st_dir > 0
-        and _ascending(df_entry["high"])
-        and _ascending(df_entry["low"])
         and near_ema21
         and macd > macd_sig
         and confirm_ok_bull
@@ -81,10 +84,8 @@ def run(df_entry, df_confirm=None, df_trend=None, mtf=False):
 
     bearish = (
         _ema_bear(df_entry)
-        and adx > 25
+        and adx > 20
         and st_dir < 0
-        and _descending(df_entry["high"])
-        and _descending(df_entry["low"])
         and near_ema21
         and macd < macd_sig
         and confirm_ok_bear

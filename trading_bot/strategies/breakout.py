@@ -79,15 +79,16 @@ def run(df_entry, df_confirm=None, df_trend=None, mtf=False):
         confirm_above = c_close > resistance
         confirm_below = c_close < support
 
-    vol_spike = volume > vol_ma * 2.0
-    atr_expand = atr > atr_ref * 1.2
+    vol_spike = volume > vol_ma * 1.5
+    atr_expand = atr > atr_ref * 1.1
 
+    # Squeeze is a bonus, not a hard requirement (breakouts also occur without a
+    # prior squeeze), so it no longer blocks every breakout signal.
     bullish = (
         close > resistance
         and close > prev_close
         and vol_spike
         and atr_expand
-        and squeeze_ok
         and confirm_above
     )
     if bullish:
