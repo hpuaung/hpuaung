@@ -1,15 +1,138 @@
 """
 utils/indicators.py — shared technical indicator computation + ML features.
 
-All indicators are computed once per cycle into stable, renamed columns so the
-strategy modules and the LightGBM feature builder read from the same frame.
-This keeps a single pandas_ta pass per timeframe (lighter on 1GB RAM).
+Indicators are implemented in pure pandas/numpy (no third-party TA library) so
+the bot has no fragile/abandoned dependency. Column names match what the
+strategy modules and the LightGBM feature builder expect. Everything is computed
+once per cycle into stable columns to keep a single pass per timeframe (lighter
+on a 1GB VPS).
 """
 
 import numpy as np
 import pandas as pd
 
 
+# ---------------------------------------------------------------------------
+# Primitive indicator helpers (Wilder smoothing where standard TA uses it)
+# ---------------------------------------------------------------------------
+def _ema(series, length):
+    return series.ewm(span=length, adjust=False).mean()
+
+
+def _sma(series, length):
+    return series.rolling(length).mean()
+
+
+def _rma(series, length):
+    """Wilder's smoothing (RMA) used by RSI/ATR/ADX."""
+    return series.ewm(alpha=1.0 / length, adjust=False).mean()
+
+
+def _rsi(close, length=14):
+    delta = close.diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = _rma(gain, length)
+    avg_loss = _rma(loss, length)
+    rs = avg_gain / avg_loss.replace(0, np.nan)
+    return 100 - (100 / (1 + rs))
+
+
+def _true_range(high, low, close):
+    prev_close = close.shift(1)
+    tr = pd.concat([
+        high - low,
+        (high - prev_close).abs(),
+        (low - prev_close).abs(),
+    ], axis=1).max(axis=1)
+    return tr
+
+
+def _atr(high, low, close, length=14):
+    return _rma(_true_range(high, low, close), length)
+
+
+def _adx(high, low, close, length=14):
+    up = high.diff()
+    down = -low.diff()
+    plus_dm = np.where((up > down) & (up > 0), up, 0.0)
+    minus_dm = np.where((down > up) & (down > 0), down, 0.0)
+    plus_dm = pd.Series(plus_dm, index=high.index)
+    minus_dm = pd.Series(minus_dm, index=high.index)
+
+    atr = _atr(high, low, close, length)
+    plus_di = 100 * _rma(plus_dm, length) / atr.replace(0, np.nan)
+    minus_di = 100 * _rma(minus_dm, length) / atr.replace(0, np.nan)
+    dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)
+    return _rma(dx, length)
+
+
+def _macd(close, fast=12, slow=26, signal=9):
+    macd = _ema(close, fast) - _ema(close, slow)
+    macd_signal = _ema(macd, signal)
+    return macd, macd_signal, macd - macd_signal
+
+
+def _bbands(close, length=20, std=2.0):
+    mid = _sma(close, length)
+    sd = close.rolling(length).std(ddof=0)
+    return mid - std * sd, mid, mid + std * sd
+
+
+def _stoch(high, low, close, k=14, d=3, smooth_k=3):
+    ll = low.rolling(k).min()
+    hh = high.rolling(k).max()
+    fast_k = 100 * (close - ll) / (hh - ll).replace(0, np.nan)
+    return fast_k.rolling(smooth_k).mean()  # smoothed %K
+
+
+def _cci(high, low, close, length=20):
+    tp = (high + low + close) / 3.0
+    sma_tp = tp.rolling(length).mean()
+    mad = tp.rolling(length).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True)
+    return (tp - sma_tp) / (0.015 * mad.replace(0, np.nan))
+
+
+def _supertrend(high, low, close, length=7, multiplier=3.0):
+    """Return a direction series: +1 uptrend (bullish), -1 downtrend (bearish)."""
+    atr = _atr(high, low, close, length)
+    hl2 = (high + low) / 2.0
+    upper = hl2 + multiplier * atr
+    lower = hl2 - multiplier * atr
+
+    n = len(close)
+    final_upper = np.full(n, np.nan)
+    final_lower = np.full(n, np.nan)
+    direction = np.ones(n)
+    c = close.values
+    ub = upper.values
+    lb = lower.values
+
+    for i in range(1, n):
+        prev_upper = final_upper[i - 1]
+        prev_lower = final_lower[i - 1]
+        # Carry forward the protective bands.
+        if np.isnan(prev_upper) or ub[i] < prev_upper or c[i - 1] > prev_upper:
+            final_upper[i] = ub[i]
+        else:
+            final_upper[i] = prev_upper
+        if np.isnan(prev_lower) or lb[i] > prev_lower or c[i - 1] < prev_lower:
+            final_lower[i] = lb[i]
+        else:
+            final_lower[i] = prev_lower
+        # Determine trend direction.
+        if not np.isnan(prev_upper) and c[i] > prev_upper:
+            direction[i] = 1
+        elif not np.isnan(prev_lower) and c[i] < prev_lower:
+            direction[i] = -1
+        else:
+            direction[i] = direction[i - 1]
+    return pd.Series(direction, index=close.index)
+
+
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """
     Add a stable set of indicator columns to an OHLCV DataFrame.
@@ -17,61 +140,39 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     Returns the same frame with added columns. Missing/NaN values are left as
     NaN; callers should guard with `has_enough(df)` before reading [-1].
     """
-    import pandas_ta as ta  # lazy: only needed for indicator computation
     out = df.copy()
-    high, low, close, vol = out["high"], out["low"], out["close"], out["volume"]
+    # Work in float64 for indicator math, regardless of the float32 OHLCV.
+    high = out["high"].astype("float64")
+    low = out["low"].astype("float64")
+    close = out["close"].astype("float64")
+    vol = out["volume"].astype("float64")
 
-    # Trend EMAs
-    out["ema8"] = ta.ema(close, length=8)
-    out["ema21"] = ta.ema(close, length=21)
-    out["ema50"] = ta.ema(close, length=50)
-    out["ema200"] = ta.ema(close, length=200)
+    out["ema8"] = _ema(close, 8)
+    out["ema21"] = _ema(close, 21)
+    out["ema50"] = _ema(close, 50)
+    out["ema200"] = _ema(close, 200)
 
-    # ADX / DI
-    adx = ta.adx(high, low, close, length=14)
-    if adx is not None:
-        out["adx"] = adx.get("ADX_14")
+    out["adx"] = _adx(high, low, close, 14)
 
-    # MACD
-    macd = ta.macd(close)
-    if macd is not None:
-        out["macd"] = macd.get("MACD_12_26_9")
-        out["macd_signal"] = macd.get("MACDs_12_26_9")
-        out["macd_hist"] = macd.get("MACDh_12_26_9")
+    macd, macd_signal, macd_hist = _macd(close)
+    out["macd"] = macd
+    out["macd_signal"] = macd_signal
+    out["macd_hist"] = macd_hist
 
-    # Supertrend (7, 3.0) -> direction column is +1 (up) / -1 (down)
-    st = ta.supertrend(high, low, close, length=7, multiplier=3.0)
-    if st is not None:
-        dir_col = [c for c in st.columns if c.startswith("SUPERTd")]
-        if dir_col:
-            out["supertrend_dir"] = st[dir_col[0]]
+    out["supertrend_dir"] = _supertrend(high, low, close, 7, 3.0)
 
-    # RSI
-    out["rsi"] = ta.rsi(close, length=14)
+    out["rsi"] = _rsi(close, 14)
 
-    # Bollinger Bands (20, 2.0)
-    bb = ta.bbands(close, length=20, std=2.0)
-    if bb is not None:
-        out["bb_lower"] = bb.get("BBL_20_2.0")
-        out["bb_mid"] = bb.get("BBM_20_2.0")
-        out["bb_upper"] = bb.get("BBU_20_2.0")
-        out["bb_width"] = out["bb_upper"] - out["bb_lower"]
+    bb_lower, bb_mid, bb_upper = _bbands(close, 20, 2.0)
+    out["bb_lower"] = bb_lower
+    out["bb_mid"] = bb_mid
+    out["bb_upper"] = bb_upper
+    out["bb_width"] = bb_upper - bb_lower
 
-    # Stochastic (14, 3, 3)
-    stoch = ta.stoch(high, low, close, k=14, d=3, smooth_k=3)
-    if stoch is not None:
-        kcol = [c for c in stoch.columns if c.startswith("STOCHk")]
-        if kcol:
-            out["stoch_k"] = stoch[kcol[0]]
-
-    # CCI (20)
-    out["cci"] = ta.cci(high, low, close, length=20)
-
-    # ATR (14)
-    out["atr"] = ta.atr(high, low, close, length=14)
-
-    # Volume moving average (20)
-    out["vol_ma"] = ta.sma(vol, length=20)
+    out["stoch_k"] = _stoch(high, low, close, 14, 3, 3)
+    out["cci"] = _cci(high, low, close, 20)
+    out["atr"] = _atr(high, low, close, 14)
+    out["vol_ma"] = _sma(vol, 20)
 
     return out
 
