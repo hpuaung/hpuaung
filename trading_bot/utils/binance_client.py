@@ -20,8 +20,10 @@ import database as db
 from utils.rate_limiter import rate_limited, with_retry
 from utils import vps_optimizer
 
-# Keep history short to stay light on 1GB RAM.
-DEFAULT_KLINES = 200
+# 300 candles: enough to fully warm up EMA200 (has_enough needs >=210) while
+# staying light on 1GB RAM. Fetching only 200 left EMA200 short of the guard,
+# so no signal ever passed.
+DEFAULT_KLINES = 300
 
 # Cache clients per (api_mode) and exchange filters per symbol.
 _clients = {}
