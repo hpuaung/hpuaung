@@ -585,19 +585,28 @@ def tab_settings():
         if st.button("🔌 Test Testnet Connection"):
             bc.reset_clients()
             ok, msg = bc.test_connection("test")
-            st.success(msg) if ok else st.error(msg)
+            if ok:
+                st.success(msg)
+            else:
+                st.error(msg)
         st.markdown("**💰 Live API**")
         text("Live API Key", "binance_live_api", password=True)
         text("Live Secret", "binance_live_secret", password=True)
         if st.button("🔌 Test Live Connection"):
             bc.reset_clients()
             ok, msg = bc.test_connection("real")
-            st.success(msg) if ok else st.error(msg)
+            if ok:
+                st.success(msg)
+            else:
+                st.error(msg)
         if st.button("💾 Save API Keys"):
             bc.reset_clients()
             ok, msg = bc.test_connection(_global_api_mode())
             tg.send_config_report()
-            st.success(f"Saved. {msg}") if ok else st.warning(f"Saved. {msg}")
+            if ok:
+                st.success(f"Saved. {msg}")
+            else:
+                st.warning(f"Saved. {msg}")
 
     with st.expander("📰 2. News & AI APIs", expanded=False):
         text("GNews API Key", "gnews_api", password=True)
@@ -651,7 +660,10 @@ def tab_settings():
         bool_toggle("Notify Risk Alert", "notify_risk_alert", True)
         bool_toggle("Notify Engine Stop", "notify_engine_stop", True)
         if st.button("📤 Test Telegram"):
-            st.success("Sent ✅") if tg.test_telegram() else st.error("Failed — check token/chat id")
+            if tg.test_telegram():
+                st.success("Sent ✅")
+            else:
+                st.error("Failed — check token/chat id")
 
     with st.expander("🧹 7. VPS Optimizer", expanded=False):
         bool_toggle("Auto Clean", "vps_auto_clean_on", True)
@@ -676,7 +688,10 @@ def tab_settings():
         select("Action", "blackout_action", ["no_entry", "close_all"],
                db.get_setting("blackout_action", "no_entry"))
         active = db.get_bool("blackout_active", False)
-        st.error("🔴 BLACKOUT ACTIVE") if active else st.success("🟢 Clear")
+        if active:
+            st.error("🔴 BLACKOUT ACTIVE")
+        else:
+            st.success("🟢 Clear")
         if active and st.button("Clear Blackout"):
             db.save_setting("blackout_active", "0")
             st.rerun()
