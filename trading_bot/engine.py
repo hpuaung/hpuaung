@@ -36,7 +36,7 @@ def _effective_tfs(strategy):
     if db.get_bool(f"{strategy}_auto_tf", True):
         if strategy == "scalping":
             return "5m", "15m", "1h"
-        return "1h", "4h", "1d"
+        return "4h", "1d", "3d"
     return (db.get_setting(f"{strategy}_timeframe", "5m"),
             db.get_setting(f"{strategy}_confirm_tf", "15m"),
             db.get_setting(f"{strategy}_trend_tf", "1h"))
