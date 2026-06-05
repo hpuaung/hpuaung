@@ -556,6 +556,8 @@ DEFAULTS = {
     "notify_daily_report": "1",
     "notify_risk_alert": "1",
     "notify_engine_stop": "1",
+    "notify_status_on": "1",
+    "notify_status_interval_hr": "4",
 
     # Simplified Auto controls (timeframe + TP/SL + trailing)
     "scalping_auto_tf": "1",

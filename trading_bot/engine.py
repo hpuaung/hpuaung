@@ -25,6 +25,7 @@ CYCLE_SECONDS = 30
 _engine_thread = None
 _engine_lock = threading.Lock()
 _last_daily_report = {"date": ""}
+_last_status = {"ts": 0.0}
 
 
 # ---------------------------------------------------------------------------
@@ -253,6 +254,20 @@ def _maybe_daily_report():
 # ---------------------------------------------------------------------------
 # Health-based emergency handling
 # ---------------------------------------------------------------------------
+def _maybe_status():
+    """Send a status snapshot to Telegram every N hours (if enabled)."""
+    if not db.get_bool("notify_status_on", True):
+        return
+    interval = db.get_float("notify_status_interval_hr", 4.0) * 3600.0
+    now = time.time()
+    if now - _last_status["ts"] >= interval:
+        _last_status["ts"] = now
+        try:
+            tg.notify_status()
+        except Exception as e:  # noqa: BLE001
+            db.log_event("STATUS_ERROR", str(e))
+
+
 def _enforce_health(equity):
     starting = db.get_float("starting_balance", equity)
     health = risk_guard.health_ratio(equity, starting)
@@ -332,9 +347,10 @@ def _run_cycle():
                 except Exception as e:  # noqa: BLE001
                     db.log_event("PAIR_ERROR", f"{symbol} {strategy}: {e}")
 
-    # Always monitor open positions and check the daily report.
+    # Always monitor open positions and check the daily report + status push.
     position_manager.monitor_all(tg)
     _maybe_daily_report()
+    _maybe_status()
 
     # Publish a snapshot to the DB so the UI never has to call Binance itself.
     _update_snapshot(equity, equity_mode, _selected_pairs())

@@ -704,16 +704,27 @@ def tab_settings():
     with st.expander("📱 6. Telegram", expanded=False):
         text("Bot Token", "telegram_token", password=True)
         text("Chat ID", "telegram_chat_id", password=True)
-        bool_toggle("Notify Trade Open", "notify_trade_open", True)
+        bool_toggle("Notify Trade Open (entry)", "notify_trade_open", True)
         bool_toggle("Notify Trade Close", "notify_trade_close", True)
         bool_toggle("Notify Daily Report (00:00 UTC)", "notify_daily_report", True)
         bool_toggle("Notify Risk Alert", "notify_risk_alert", True)
         bool_toggle("Notify Engine Stop", "notify_engine_stop", True)
-        if st.button("📤 Test Telegram"):
+        st.markdown("---")
+        bool_toggle("🔄 Periodic Status Update", "notify_status_on", True)
+        slider("Status interval (hours)", "notify_status_interval_hr", 1.0, 24.0, 1.0,
+               db.get_float("notify_status_interval_hr", 4.0))
+        cols_tg = st.columns(2)
+        if cols_tg[0].button("📤 Test Telegram"):
             if tg.test_telegram():
                 st.success("Sent ✅")
             else:
                 st.error("Failed — check token/chat id")
+        if cols_tg[1].button("📊 Send Status Now"):
+            if db.get_setting("telegram_token"):
+                tg.notify_status()
+                st.success("Status sent ✅")
+            else:
+                st.error("Set token first")
 
     with st.expander("🧹 7. VPS Optimizer", expanded=False):
         bool_toggle("Auto Clean", "vps_auto_clean_on", True)
@@ -786,7 +797,8 @@ def tab_settings():
 
     st.divider()
     if st.button("💾 SAVE ALL SETTINGS", type="primary"):
-        st.success("All settings auto-save on change ✅ (and are now persisted)")
+        tg.notify_settings_saved()
+        st.success("All settings saved ✅ (Telegram notified if configured)")
 
 
 # ===========================================================================

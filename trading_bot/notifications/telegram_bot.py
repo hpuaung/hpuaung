@@ -117,6 +117,59 @@ def notify_daily_report(report_text):
     send_message(report_text)
 
 
+def build_status_text():
+    """A dashboard-like status snapshot (reads the DB only, no Binance calls)."""
+    from execution import risk_guard
+    paper = db.get_bool("paper_trading_mode", True)
+    conn = "🟢" if db.get_setting("binance_conn", "") == "1" else "🔴"
+
+    def _fb(v):
+        try:
+            return f"${float(v):,.2f}"
+        except (TypeError, ValueError):
+            return "—"
+
+    eq = db.get_float("last_equity", 0.0)
+    starting = db.get_float("starting_balance", eq or 1)
+    health = risk_guard.health_ratio(eq, starting)
+    _, zone = risk_guard.health_zone(health)
+    pnl = risk_guard.today_pnl()
+    trades = db.get_today_trades()
+    wins = sum(1 for t in trades if (t.get("net_pnl") or 0) > 0)
+    wr = (wins / len(trades) * 100) if trades else 0.0
+    positions = db.get_open_positions()
+    lgbm_ok = "🟢" if db.get_setting("lgbm_last_trained", "") else "🔴"
+
+    lines = [
+        "📊 <b>BOT STATUS</b>",
+        f"⏱ {db.utcnow_str()} UTC",
+        f"{conn} Binance | {'🧪 PAPER' if paper else '💰 REAL'}",
+        f"💰 Test: {_fb(db.get_setting('last_equity_test',''))} | "
+        f"Live: {_fb(db.get_setting('last_equity_live',''))}",
+        f"🏥 Health: {health:.0f}% {zone}",
+        f"📈 Today PnL: {pnl:+.2f} | Trades {len(trades)} | WR {wr:.0f}%",
+        "──────────────",
+        f"⚡ Scalping: {'🟢 Running' if db.get_bool('scalping_bot_on') else '🔴 Stopped'}",
+        f"📈 Swing: {'🟢 Running' if db.get_bool('swing_bot_on') else '🔴 Stopped'}",
+        f"🤖 LightGBM: {lgbm_ok}",
+        f"📍 Open positions: {len(positions)}",
+    ]
+    for p in positions[:10]:
+        lines.append(f"  {p['symbol']} {p['side']} @ {p['entry_price']}")
+    return "\n".join(lines)
+
+
+def notify_status():
+    """Send the periodic status snapshot to Telegram."""
+    send_message(build_status_text())
+
+
+def notify_settings_saved():
+    if not db.get_setting("telegram_token", ""):
+        return
+    send_message("⚙️ <b>Settings saved</b>\n" + build_status_text())
+
+
 # ---------------------------------------------------------------------------
 # Interactive command bot (async, own thread)
 # ---------------------------------------------------------------------------
@@ -175,19 +228,10 @@ def run_command_bot(stop_event=None):
         )
 
     async def dashboard(update: Update, ctx):
-        await update.message.reply_text(_build_dashboard_text())
+        await update.message.reply_text(build_status_text(), parse_mode="HTML")
 
     async def status(update: Update, ctx):
-        from execution import risk_guard
-        trades = db.get_today_trades()
-        wins = sum(1 for t in trades if (t.get("net_pnl") or 0) > 0)
-        wr = (wins / len(trades) * 100) if trades else 0.0
-        mode = "PAPER" if db.get_bool("paper_trading_mode", True) else "REAL"
-        await update.message.reply_text(
-            f"Mode: {mode}\nPairs: {db.get_setting('selected_pairs','')}\n"
-            f"Today trades: {len(trades)} | Win rate: {wr:.0f}%\n"
-            f"Net PnL: {risk_guard.today_pnl():+.2f}"
-        )
+        await update.message.reply_text(build_status_text(), parse_mode="HTML")
 
     async def stop_cmd(update: Update, ctx):
         _pending_stop["ts"] = time.time()
