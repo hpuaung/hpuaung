@@ -153,6 +153,23 @@ def live_price(symbol, api_mode=None):
     return float(_snapshot_prices().get(symbol, 0.0) or 0.0)
 
 
+def _conn_badge(mode):
+    """Persistent 🟢/🔴 connection status badge for an API mode ('test'/'live')."""
+    ok = db.get_setting(f"conn_{mode}_ok", "")
+    msg = db.get_setting(f"conn_{mode}_msg", "")
+    if ok == "1":
+        st.success(f"🟢 Connected — {msg}")
+    elif ok == "0":
+        st.error(f"🔴 Not connected — {msg}")
+    else:
+        st.info("⚪ Not tested yet — enter keys and press Test/Save")
+
+
+def binance_connected():
+    """True if the engine's latest equity read succeeded."""
+    return db.get_setting("binance_conn", "") == "1"
+
+
 # ===========================================================================
 # TAB 1 — DASHBOARD
 # ===========================================================================
@@ -582,31 +599,31 @@ def tab_settings():
         st.markdown("**🧪 Testnet**")
         text("Testnet API Key", "binance_testnet_api", password=True)
         text("Testnet Secret", "binance_testnet_secret", password=True)
+        _conn_badge("test")
         if st.button("🔌 Test Testnet Connection"):
             bc.reset_clients()
             ok, msg = bc.test_connection("test")
-            if ok:
-                st.success(msg)
-            else:
-                st.error(msg)
+            db.save_setting("conn_test_ok", "1" if ok else "0")
+            db.save_setting("conn_test_msg", msg)
+            st.rerun()
         st.markdown("**💰 Live API**")
         text("Live API Key", "binance_live_api", password=True)
         text("Live Secret", "binance_live_secret", password=True)
+        _conn_badge("live")
         if st.button("🔌 Test Live Connection"):
             bc.reset_clients()
             ok, msg = bc.test_connection("real")
-            if ok:
-                st.success(msg)
-            else:
-                st.error(msg)
+            db.save_setting("conn_live_ok", "1" if ok else "0")
+            db.save_setting("conn_live_msg", msg)
+            st.rerun()
         if st.button("💾 Save API Keys"):
             bc.reset_clients()
-            ok, msg = bc.test_connection(_global_api_mode())
+            mode = _global_api_mode()
+            ok, msg = bc.test_connection(mode)
+            db.save_setting("conn_test_ok" if mode == "test" else "conn_live_ok", "1" if ok else "0")
+            db.save_setting("conn_test_msg" if mode == "test" else "conn_live_msg", msg)
             tg.send_config_report()
-            if ok:
-                st.success(f"Saved. {msg}")
-            else:
-                st.warning(f"Saved. {msg}")
+            st.rerun()
 
     with st.expander("📰 2. News & AI APIs", expanded=False):
         text("GNews API Key", "gnews_api", password=True)
@@ -748,8 +765,9 @@ def main():
     if cols[0].button("🔄 Refresh"):
         st.cache_data.clear()
         st.rerun()
+    conn = "🟢 Binance Connected" if binance_connected() else "🔴 Binance Not Connected"
     cols[1].caption(f"UTC {datetime.now(timezone.utc).strftime('%H:%M:%S')} | "
-                    f"{'🧪 PAPER' if db.get_bool('paper_trading_mode', True) else '💰 REAL'}")
+                    f"{'🧪 PAPER' if db.get_bool('paper_trading_mode', True) else '💰 REAL'} | {conn}")
 
     t1, t2, t3, t4 = st.tabs(["📊 Dashboard", "⚡ Scalping", "📈 Swing", "⚙️ Settings"])
     with t1:

@@ -281,8 +281,12 @@ def _run_cycle():
 
     try:
         equity = bc.get_equity(equity_mode)
+        db.save_setting("binance_conn", "1")
+        db.save_setting("binance_conn_msg", f"Connected ({equity_mode})")
     except Exception as e:  # noqa: BLE001
         db.log_event("EQUITY_ERROR", str(e))
+        db.save_setting("binance_conn", "0")
+        db.save_setting("binance_conn_msg", f"Not connected: {e}")
         equity = db.get_float("starting_balance", 0.0)
 
     # Auto-read starting balance on first successful connect.
