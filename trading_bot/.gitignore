@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+*.pkl
+*.db
+*.db-wal
+*.db-shm
+.env
+.venv/
+venv/
+.DS_Store
