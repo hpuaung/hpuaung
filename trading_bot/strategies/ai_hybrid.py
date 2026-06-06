@@ -145,10 +145,13 @@ def run(df_entry, trend_res, reversion_res, breakout_res,
     # the model is confidently predicting the OPPOSITE direction. Agreement or a
     # neutral (HOLD) prediction lets the setup through. This keeps the bot
     # trading on valid setups instead of waiting for perfect model agreement.
+    # Veto only when the model is *confidently* opposite (>= 0.65). A merely
+    # mild opposite lean (e.g. expecting a bounce at an oversold extreme) must
+    # not block a strong trend-following signal.
     opposite = 0 if direction == "BUY" else 2  # SELL class vs BUY class
     model_vetoes = (model is not None
                     and lgbm_direction == opposite
-                    and lgbm_score >= ai_threshold)
+                    and lgbm_score >= 0.65)
 
     # Step 4 — execution gate. The cumulative score measures *bullish* strength,
     # which is naturally low for counter-trend (reversion) buys at a bottom, so a
