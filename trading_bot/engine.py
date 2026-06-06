@@ -206,6 +206,15 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health):
             signal["sl"] = entry * (1 + sl_pct / 100.0)
         signal["tp1"] = signal["tp2"] = signal["tp3"] = tp
 
+    # Adaptive win-rate filter (the bot learns from its own SQLite history):
+    # once there is enough data, avoid pair/strategy contexts that have been
+    # losing. With little history it stays out of the way so trading can begin.
+    wr_pair, n_pair = db.winrate(strategy, symbol)
+    if n_pair >= 15 and wr_pair is not None and wr_pair < 40.0:
+        db.log_event("WINRATE_SKIP", f"{symbol} {strategy} winrate={wr_pair:.0f}% over {n_pair} trades")
+        db.log_signal(symbol, triggered or strategy, lgbm_score, news_score, "LOWWR_SKIP")
+        return
+
     session = _current_session()
 
     pos_id = orders.execute_order(

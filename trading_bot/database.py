@@ -341,6 +341,28 @@ def clear_paper_trades():
         conn.commit()
 
 
+def winrate(strategy=None, pair=None):
+    """
+    Historical win rate (%) and trade count for a context, read from the trades
+    table — the bot's own learning memory. Returns (win_rate_or_None, n).
+    """
+    conn = get_conn()
+    q = "SELECT net_pnl FROM trades WHERE 1=1"
+    args = []
+    if strategy:
+        q += " AND strategy=?"
+        args.append(strategy)
+    if pair:
+        q += " AND pair=?"
+        args.append(pair)
+    rows = conn.execute(q, args).fetchall()
+    n = len(rows)
+    if n == 0:
+        return None, 0
+    wins = sum(1 for r in rows if (r["net_pnl"] or 0) > 0)
+    return wins / n * 100.0, n
+
+
 # ---------------------------------------------------------------------------
 # Signals log
 # ---------------------------------------------------------------------------
