@@ -316,9 +316,17 @@ def engine_loop(stop_event=None):
 
 
 def _run_cycle():
-    # Determine the api mode for the equity read (prefer real if any engine real).
-    equity_mode = "real" if (db.get_setting("scalping_api_mode") == "real"
-                             or db.get_setting("swing_api_mode") == "real") else "test"
+    # Determine the api mode for the equity read. Prefer 'real' only if a real
+    # engine is configured AND live credentials exist; otherwise fall back to
+    # 'test' so a missing live secret can't spam EQUITY_ERROR or shrink sizing.
+    real_engine = (db.get_setting("scalping_api_mode") == "real"
+                   or db.get_setting("swing_api_mode") == "real")
+    if real_engine and bc.has_credentials("real"):
+        equity_mode = "real"
+    elif bc.has_credentials("test"):
+        equity_mode = "test"
+    else:
+        equity_mode = "real" if real_engine else "test"
 
     # Emergency stop short-circuits everything except position monitoring.
     if db.get_bool("emergency_stop", False):
