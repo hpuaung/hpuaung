@@ -170,33 +170,6 @@ def live_price(symbol, api_mode=None):
     return float(_snapshot_prices().get(symbol, 0.0) or 0.0)
 
 
-def _rec_leverage(equity):
-    """Recommended leverage from balance — smaller accounts use less."""
-    if equity <= 0:
-        return 5
-    if equity < 100:
-        return 3
-    if equity < 1000:
-        return 5
-    if equity < 10000:
-        return 8
-    return 10
-
-
-def _rec_risk(strategy):
-    """Recommended risk % from the bot's own win-rate history. Returns (rec, wr, n)."""
-    wr, n = db.winrate(strategy)
-    rec = 1.0
-    if n >= 15 and wr is not None:
-        if wr < 40:
-            rec = 0.5
-        elif wr < 50:
-            rec = 0.8
-        elif wr > 60:
-            rec = 1.5
-    return rec, wr, n
-
-
 def _conn_badge(mode):
     """Persistent 🟢/🔴 connection status badge for an API mode ('test'/'live')."""
     ok = db.get_setting(f"conn_{mode}_ok", "")
@@ -519,24 +492,29 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
     st.divider()
     st.subheader("🛡️ Risk Management")
     auto = bool_toggle("Auto Risk Adjust", f"{strategy}_auto_risk", True)
-    base_lev = slider("Base Leverage (x)", f"{strategy}_base_leverage", 1, 20, 1,
-                      db.get_int(f"{strategy}_base_leverage", 5), is_int=True)
-    base_risk = slider("Base Risk %", f"{strategy}_base_risk_pct", 0.1, 10.0, 0.1,
-                       db.get_float(f"{strategy}_base_risk_pct", 1.0))
     api_mode = db.get_setting(f"{strategy}_api_mode", "test")
     equity, _ = live_equity(api_mode if api_mode == "real" else "test")
     health = risk_guard.health_ratio(equity, db.get_float("starting_balance", equity or 1))
     mult = risk_guard.health_multiplier(health)
     if auto:
-        st.caption(f"🤖 Auto adapts to balance (health {health:.0f}% → {mult:.2f}x) "
-                   f"+ win/loss streak.")
-        st.write(f"Effective Leverage: **{max(1, int(base_lev*mult))}x** | "
-                 f"Effective Risk: **{base_risk*mult:.2f}%**")
+        # Auto → sliders hidden; bot sizes from balance + win-rate + health.
+        rec_lev = risk_guard.recommended_leverage(equity)
+        rec_risk = risk_guard.recommended_risk(strategy)
+        eff_lev = max(1, int(round(rec_lev * mult)))
+        eff_risk = rec_risk * mult
+        st.caption(f"🤖 Auto from balance ${equity:,.0f} + win-rate history + "
+                   f"health {health:.0f}% (×{mult:.2f}). No manual input needed.")
+        st.write(f"Effective Leverage: **{eff_lev}x** | Effective Risk: **{eff_risk:.2f}%**")
     else:
         st.warning("⚠️ Manual Override Active — bot guidance below")
+        base_lev = slider("Base Leverage (x)", f"{strategy}_base_leverage", 1, 20, 1,
+                          db.get_int(f"{strategy}_base_leverage", 5), is_int=True)
+        base_risk = slider("Base Risk %", f"{strategy}_base_risk_pct", 0.1, 10.0, 0.1,
+                           db.get_float(f"{strategy}_base_risk_pct", 1.0))
         cap = db.get_float("lev_risk_hard_cap_pct", 10.0)
-        rec_lev = _rec_leverage(equity)
-        rec_risk, wr, n = _rec_risk(strategy)
+        rec_lev = risk_guard.recommended_leverage(equity)
+        rec_risk = risk_guard.recommended_risk(strategy)
+        wr, n = db.winrate(strategy)
         hist = f"win rate {wr:.0f}% / {n} trades" if (n and wr is not None) else "no history yet"
         st.info(f"💡 Recommended: **{rec_lev}x** leverage · **{rec_risk:.1f}%** risk "
                 f"(balance ${equity:,.0f}, {hist})")
@@ -571,11 +549,14 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
         st.caption(f"After 0.08% fee → Net TP {net_tp:.2f}% / Net SL {net_sl:.2f}% | R:R 1:{rr:.2f}")
     bool_toggle("Auto Break-Even on TP1", f"{strategy}_auto_be", True)
 
-    # Trailing stop
+    # Trailing stop — distance is auto (ATR) when Auto TP/SL is on, manual slider otherwise.
     trail_on = bool_toggle("📉 Trailing SL", f"{strategy}_trail_auto", False)
     if trail_on:
-        slider("Trailing distance %", f"{strategy}_trail_pct", 0.2, 5.0, 0.1,
-               db.get_float(f"{strategy}_trail_pct", 1.5 if strategy == "swing" else 0.5))
+        if auto_tpsl:
+            st.caption("🤖 Auto trailing distance (adapts to ATR / volatility).")
+        else:
+            slider("Trailing distance %", f"{strategy}_trail_pct", 0.2, 5.0, 0.1,
+                   db.get_float(f"{strategy}_trail_pct", 1.5 if strategy == "swing" else 0.5))
 
     # Swing extras
     if swing:

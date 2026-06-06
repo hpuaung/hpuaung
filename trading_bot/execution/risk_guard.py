@@ -208,3 +208,33 @@ def streak_risk_adjustment():
     if not db.get_bool("win_streak_bonus_on", False):
         return 0.0
     return db.get_float("streak_risk_adj", 0.0)
+
+
+# ---------------------------------------------------------------------------
+# Auto recommendations (used by the engine in Auto mode + shown in the UI)
+# ---------------------------------------------------------------------------
+def recommended_leverage(equity):
+    """Leverage scaled to account size — smaller balances trade smaller."""
+    if equity <= 0:
+        return 5
+    if equity < 100:
+        return 3
+    if equity < 1000:
+        return 5
+    if equity < 10000:
+        return 8
+    return 10
+
+
+def recommended_risk(strategy):
+    """Risk % adapted from the bot's own win-rate history (SQLite)."""
+    wr, n = db.winrate(strategy)
+    rec = 1.0
+    if n >= 15 and wr is not None:
+        if wr < 40:
+            rec = 0.5
+        elif wr < 50:
+            rec = 0.8
+        elif wr > 60:
+            rec = 1.5
+    return rec

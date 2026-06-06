@@ -185,7 +185,14 @@ def process_position(pos, notifier=None):
 
     # --- Trailing stop ---
     if pos.get("trailing_active"):
-        trail_pct = db.get_float(f"{strat}_trail_pct", 1.5)
+        # Auto TP/SL mode → trailing distance adapts to volatility (ATR at
+        # entry); manual mode → use the user's distance slider.
+        if db.get_bool(f"{strat}_auto_tpsl", True):
+            atr = float(pos.get("atr_at_entry") or 0.0)
+            trail_pct = max(0.3, atr / entry * 100.0) if (atr > 0 and entry > 0) \
+                else db.get_float(f"{strat}_trail_pct", 1.5)
+        else:
+            trail_pct = db.get_float(f"{strat}_trail_pct", 1.5)
         cur_trail = pos.get("trail_sl_price") or 0.0
         if d > 0:
             new_trail = price * (1 - trail_pct / 100.0)

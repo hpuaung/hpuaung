@@ -20,13 +20,17 @@ def _sizing(symbol, strategy, signal, equity, multiplier, api_mode):
     sizing details or {"blocked": reason}.
     """
     auto_risk = db.get_bool(f"{strategy}_auto_risk", True)
-    base_lev = db.get_int(f"{strategy}_base_leverage", 5)
-    base_risk = db.get_float(f"{strategy}_base_risk_pct", 1.0)
 
     if auto_risk:
+        # Fully automatic: base sized from balance + win-rate history, then
+        # scaled by the health multiplier (the user sets nothing).
+        base_lev = risk_guard.recommended_leverage(equity)
+        base_risk = risk_guard.recommended_risk(strategy)
         eff_lev = max(1, int(round(base_lev * multiplier)))
         eff_risk = base_risk * multiplier
     else:
+        base_lev = db.get_int(f"{strategy}_base_leverage", 5)
+        base_risk = db.get_float(f"{strategy}_base_risk_pct", 1.0)
         eff_lev = base_lev
         eff_risk = base_risk
 
