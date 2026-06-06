@@ -72,11 +72,33 @@ def _average_levels(signals):
 def aggregate_signal(symbol, strategy, df_entry, df_confirm, df_trend,
                      funding_rate, oi_change, news_score):
     mtf = db.get_bool(f"{strategy}_mtf_filter", True)
+    hybrid_on = db.get_bool(f"{strategy}_hybrid_on", True)
+
+    if hybrid_on:
+        # AI Hybrid aggregates the base strategies internally, so evaluate ALL
+        # three regardless of their individual on/off toggles (those toggles only
+        # gate the non-hybrid consensus mode). This is what makes "AI Hybrid
+        # only" work even when Trend/Reversion/Breakout are toggled off.
+        trend_res = trend.run(df_entry, df_confirm, df_trend, mtf)
+        rev_res = reversion.run(df_entry, df_confirm, df_trend, mtf)
+        brk_res = breakout.run(df_entry, df_confirm, df_trend, mtf)
+        triggered = "+".join(
+            name for name, res in [("Trend", trend_res), ("Reversion", rev_res),
+                                   ("Breakout", brk_res)]
+            if res and res["signal"] != "NONE"
+        )
+        ai_threshold = db.get_float(f"{strategy}_ai_threshold", 0.75)
+        final = ai_hybrid.run(
+            df_entry, trend_res, rev_res, brk_res,
+            funding_rate=funding_rate, oi_change_pct=oi_change,
+            news_score=news_score, ai_threshold=ai_threshold,
+        )
+        return final, (triggered or "AI"), float(final.get("lgbm_score", 0.0))
+
+    # --- Non-hybrid consensus mode: only the toggled-on strategies ---
     trend_on = db.get_bool(f"{strategy}_trend_on", True)
     reversion_on = db.get_bool(f"{strategy}_reversion_on", True)
     breakout_on = db.get_bool(f"{strategy}_breakout_on", True)
-    hybrid_on = db.get_bool(f"{strategy}_hybrid_on", True)
-
     trend_res = trend.run(df_entry, df_confirm, df_trend, mtf) if trend_on else None
     rev_res = reversion.run(df_entry, df_confirm, df_trend, mtf) if reversion_on else None
     brk_res = breakout.run(df_entry, df_confirm, df_trend, mtf) if breakout_on else None
@@ -86,35 +108,20 @@ def aggregate_signal(symbol, strategy, df_entry, df_confirm, df_trend,
         return {"signal": "NONE"}, "", 0.0
 
     triggered = "+".join(
-        name for name, res, on in [
-            ("Trend", trend_res, trend_on),
-            ("Reversion", rev_res, reversion_on),
-            ("Breakout", brk_res, breakout_on),
-        ] if on and res and res["signal"] != "NONE"
+        name for name, res in [("Trend", trend_res), ("Reversion", rev_res),
+                               ("Breakout", brk_res)]
+        if res and res["signal"] != "NONE"
     )
-
-    if hybrid_on:
-        ai_threshold = db.get_float(f"{strategy}_ai_threshold", 0.75)
-        final = ai_hybrid.run(
-            df_entry,
-            trend_res or {"signal": "NONE"},
-            rev_res or {"signal": "NONE"},
-            brk_res or {"signal": "NONE"},
-            funding_rate=funding_rate, oi_change_pct=oi_change,
-            news_score=news_score, ai_threshold=ai_threshold,
-        )
-        return final, (triggered or "AI"), float(final.get("lgbm_score", 0.0))
-
-    # Consensus: all enabled non-NONE strategies must agree.
     non_none = [s for s in enabled if s["signal"] != "NONE"]
-    total_on = len(enabled)
     buy_count = sum(1 for s in non_none if s["signal"] == "BUY")
     sell_count = sum(1 for s in non_none if s["signal"] == "SELL")
 
-    if buy_count == total_on and buy_count > 0:
+    # Majority direction wins (unanimity was effectively impossible since trend
+    # and reversion fire under opposite conditions).
+    if buy_count > sell_count and buy_count > 0:
         lv = _average_levels([s for s in non_none if s["signal"] == "BUY"])
         return {"signal": "BUY", **lv}, triggered, 0.0
-    if sell_count == total_on and sell_count > 0:
+    if sell_count > buy_count and sell_count > 0:
         lv = _average_levels([s for s in non_none if s["signal"] == "SELL"])
         return {"signal": "SELL", **lv}, triggered, 0.0
     return {"signal": "NONE"}, triggered, 0.0
