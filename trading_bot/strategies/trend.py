@@ -40,8 +40,12 @@ def run(df_entry, df_confirm=None, df_trend=None, mtf=False):
     st_dir = safe(df_entry.get("supertrend_dir"))
     macd = safe(df_entry.get("macd"))
     macd_sig = safe(df_entry.get("macd_signal"))
-    # Pullback proximity to EMA21 (widened to 1.5% — a realistic entry zone).
+    # Entry trigger: either a pullback to EMA21 (≤1.5%) OR a strong trend
+    # (ADX > 30) where we ride momentum without waiting for a pullback —
+    # otherwise strong, fast-moving trends (price far from EMA21) are missed.
     near_ema21 = abs(close - ema21) / max(ema21, 1e-9) <= 0.015
+    strong_trend = adx > 30
+    entry_ok = near_ema21 or strong_trend
 
     # Previous swing levels over last 20 candles.
     recent = df_entry.tail(20)
@@ -67,7 +71,7 @@ def run(df_entry, df_confirm=None, df_trend=None, mtf=False):
         _ema_bull(df_entry)
         and adx > 20
         and st_dir > 0
-        and near_ema21
+        and entry_ok
         and macd > macd_sig
         and confirm_ok_bull
         and trend_ok_bull
@@ -86,7 +90,7 @@ def run(df_entry, df_confirm=None, df_trend=None, mtf=False):
         _ema_bear(df_entry)
         and adx > 20
         and st_dir < 0
-        and near_ema21
+        and entry_ok
         and macd < macd_sig
         and confirm_ok_bear
         and trend_ok_bear
