@@ -150,8 +150,12 @@ def run(df_entry, trend_res, reversion_res, breakout_res,
                     and lgbm_direction == opposite
                     and lgbm_score >= ai_threshold)
 
-    # Step 4 — execution gate.
-    if not (cumulative >= ai_threshold * 100 and not model_vetoes):
+    # Step 4 — execution gate. The cumulative score measures *bullish* strength,
+    # which is naturally low for counter-trend (reversion) buys at a bottom, so a
+    # full threshold*100 floor would wrongly block them. Use a lenient floor
+    # (scaled by the threshold) and lean on the base strategy + model veto.
+    cum_floor = ai_threshold * 60.0  # 0.50->30, 0.65->39, 0.75->45
+    if not (cumulative >= cum_floor and not model_vetoes):
         return {**NONE, "score": cumulative, "lgbm_score": lgbm_score,
                 "market_type": market_type}
 
