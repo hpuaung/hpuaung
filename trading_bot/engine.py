@@ -46,11 +46,19 @@ def _effective_tfs(strategy):
 def _gather_indicator_frames(symbol, strategy, api_mode):
     entry_tf, confirm_tf, trend_tf = _effective_tfs(strategy)
 
-    df_entry = indicators.compute_indicators(bc.get_ohlcv(symbol, entry_tf, api_mode=api_mode))
+    # Drop the still-forming last candle so signals are evaluated on CLOSED
+    # candles only. Otherwise the live candle wobbles indicators across their
+    # thresholds and the signal flickers between fire/NONE, so the 30s engine
+    # scan keeps missing it. On a closed candle the signal stays stable for the
+    # whole candle period, giving the engine many scans to act on it.
+    def _closed(df):
+        return df.iloc[:-1] if (df is not None and len(df) > 1) else df
+
+    df_entry = indicators.compute_indicators(_closed(bc.get_ohlcv(symbol, entry_tf, api_mode=api_mode)))
     df_confirm = df_trend = None
     if db.get_bool(f"{strategy}_mtf_filter", True):
-        df_confirm = indicators.compute_indicators(bc.get_ohlcv(symbol, confirm_tf, api_mode=api_mode))
-        df_trend = indicators.compute_indicators(bc.get_ohlcv(symbol, trend_tf, api_mode=api_mode))
+        df_confirm = indicators.compute_indicators(_closed(bc.get_ohlcv(symbol, confirm_tf, api_mode=api_mode)))
+        df_trend = indicators.compute_indicators(_closed(bc.get_ohlcv(symbol, trend_tf, api_mode=api_mode)))
     return df_entry, df_confirm, df_trend
 
 
