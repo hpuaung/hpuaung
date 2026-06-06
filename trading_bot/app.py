@@ -440,6 +440,11 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
         st.rerun()
     running = db.get_bool(f"{strategy}_bot_on")
     st.info(f"Status: {'🟢 Running' if running else '🟡 Stopped'}")
+    if st.button("🧪 Place Test Trade (paper)", key=f"{strategy}_testtrade"):
+        st.toast(_place_test_trade(strategy))
+        st.rerun()
+    st.caption("Test Trade opens a small PAPER position now so you can watch the "
+               "full lifecycle (entry → TP/SL/trail → close). For verification only.")
 
     # Section 2 — Timeframe
     st.divider()
@@ -632,6 +637,35 @@ def _close_one(pos):
 def _close_all_for(strategy):
     for p in db.get_open_positions(strategy=strategy):
         _close_one(p)
+
+
+def _place_test_trade(strategy):
+    """Open one small PAPER BUY position on the first selected pair (for testing
+    the execution + monitoring pipeline, independent of signal generation)."""
+    pairs = [p.strip() for p in db.get_setting("selected_pairs", "").split(",") if p.strip()]
+    if not pairs:
+        return "Select a pair first (Dashboard)"
+    sym = pairs[0]
+    api_mode = db.get_setting(f"{strategy}_api_mode", "test")
+    try:
+        price = bc.get_price(sym, api_mode)
+    except Exception as e:  # noqa: BLE001
+        return f"Price error: {e}"
+    d = price * 0.005  # ~0.5% as a pseudo-ATR for SL/TP spacing
+    signal = {"signal": "BUY", "entry": price, "sl": price - d * 1.5,
+              "tp1": price + d * 2, "tp2": price + d * 4, "tp3": price + d * 5, "atr": d}
+    equity = db.get_float("last_equity_test", 0) or db.get_float("last_equity", 0) or 5000.0
+    pid = orders.execute_order(
+        sym, strategy, signal, equity=equity, multiplier=1.0, api_mode=api_mode,
+        paper_mode=True, funding_rate=0.0, open_interest=0.0, session="manual",
+        lgbm_score=0.0, news_score=0.0, health=100.0,
+    )
+    if pid:
+        pos = db.get_position(pid)
+        if pos:
+            tg.notify_trade_open(pos)
+        return f"✅ Test paper trade opened: {sym} BUY @ {price:.2f}"
+    return "Blocked — check Lev×Risk hard cap / min qty"
 
 
 # ===========================================================================
