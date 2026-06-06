@@ -15,7 +15,10 @@ import database as db
 from utils import vps_optimizer
 
 GNEWS_URL = "https://gnews.io/api/v4/search"
-HF_URL = "https://api-inference.huggingface.co/models/ProsusAI/finbert"
+# HuggingFace retired api-inference.huggingface.co; the current serverless
+# inference endpoint is the router host.
+HF_URL = "https://router.huggingface.co/hf-inference/models/ProsusAI/finbert"
+HF_URL_LEGACY = "https://api-inference.huggingface.co/models/ProsusAI/finbert"
 
 GNEWS_DAILY_HARD_STOP = 95   # stop hitting the API, use cache only
 HF_MONTHLY_LIMIT = 30000
@@ -98,26 +101,28 @@ def call_huggingface_api(text):
 
     headers = {"Authorization": f"Bearer {token}"}
     payload = {"inputs": text[:512]}
-    try:
-        resp = requests.post(HF_URL, headers=headers, json=payload, timeout=15)
-        db.incr_counter(db.hf_month_key())
-        if resp.status_code != 200:
-            return 0.0
-        data = resp.json()
-        # Response is typically [[{label, score}, ...]] or [{...}].
-        scores = data[0] if isinstance(data, list) and data and isinstance(data[0], list) else data
-        pos = neg = 0.0
-        for item in scores:
-            label = str(item.get("label", "")).lower()
-            score = float(item.get("score", 0.0))
-            if label == "positive":
-                pos = score
-            elif label == "negative":
-                neg = score
-        return max(-1.0, min(1.0, pos - neg))
-    except Exception as e:  # noqa: BLE001
-        db.log_event("HF_ERROR", str(e))
-        return 0.0
+    db.incr_counter(db.hf_month_key())
+    for url in (HF_URL, HF_URL_LEGACY):
+        try:
+            resp = requests.post(url, headers=headers, json=payload, timeout=15)
+            if resp.status_code != 200:
+                db.log_event("HF_ERROR", f"{resp.status_code} {resp.text[:80]}")
+                continue
+            data = resp.json()
+            # Response is typically [[{label, score}, ...]] or [{...}].
+            scores = data[0] if isinstance(data, list) and data and isinstance(data[0], list) else data
+            pos = neg = 0.0
+            for item in scores:
+                label = str(item.get("label", "")).lower()
+                score = float(item.get("score", 0.0))
+                if label == "positive":
+                    pos = score
+                elif label == "negative":
+                    neg = score
+            return max(-1.0, min(1.0, pos - neg))
+        except Exception as e:  # noqa: BLE001
+            db.log_event("HF_ERROR", f"{url.split('/')[2]}: {e}")
+    return 0.0
 
 
 def get_sentiment(symbol, cache_min=30):
