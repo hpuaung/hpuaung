@@ -170,6 +170,33 @@ def live_price(symbol, api_mode=None):
     return float(_snapshot_prices().get(symbol, 0.0) or 0.0)
 
 
+def _rec_leverage(equity):
+    """Recommended leverage from balance — smaller accounts use less."""
+    if equity <= 0:
+        return 5
+    if equity < 100:
+        return 3
+    if equity < 1000:
+        return 5
+    if equity < 10000:
+        return 8
+    return 10
+
+
+def _rec_risk(strategy):
+    """Recommended risk % from the bot's own win-rate history. Returns (rec, wr, n)."""
+    wr, n = db.winrate(strategy)
+    rec = 1.0
+    if n >= 15 and wr is not None:
+        if wr < 40:
+            rec = 0.5
+        elif wr < 50:
+            rec = 0.8
+        elif wr > 60:
+            rec = 1.5
+    return rec, wr, n
+
+
 def _conn_badge(mode):
     """Persistent 🟢/🔴 connection status badge for an API mode ('test'/'live')."""
     ok = db.get_setting(f"conn_{mode}_ok", "")
@@ -501,12 +528,22 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
     health = risk_guard.health_ratio(equity, db.get_float("starting_balance", equity or 1))
     mult = risk_guard.health_multiplier(health)
     if auto:
-        st.caption(f"Health {health:.0f}% → Multiplier {mult:.2f}x")
+        st.caption(f"🤖 Auto adapts to balance (health {health:.0f}% → {mult:.2f}x) "
+                   f"+ win/loss streak.")
         st.write(f"Effective Leverage: **{max(1, int(base_lev*mult))}x** | "
                  f"Effective Risk: **{base_risk*mult:.2f}%**")
     else:
-        st.warning("⚠️ Manual Override Active")
+        st.warning("⚠️ Manual Override Active — bot guidance below")
         cap = db.get_float("lev_risk_hard_cap_pct", 10.0)
+        rec_lev = _rec_leverage(equity)
+        rec_risk, wr, n = _rec_risk(strategy)
+        hist = f"win rate {wr:.0f}% / {n} trades" if (n and wr is not None) else "no history yet"
+        st.info(f"💡 Recommended: **{rec_lev}x** leverage · **{rec_risk:.1f}%** risk "
+                f"(balance ${equity:,.0f}, {hist})")
+        if base_lev > rec_lev:
+            st.warning(f"⚠️ {base_lev}x leverage is high for your balance — recommended ≤ {rec_lev}x")
+        if base_risk > rec_risk * 1.5:
+            st.warning(f"⚠️ {base_risk:.1f}% risk is high — recommended ~{rec_risk:.1f}%")
         if base_lev * base_risk > cap:
             st.error(f"❌ BLOCKED: Lev×Risk {base_lev*base_risk:.1f}% > hard cap {cap:.0f}%")
         else:
@@ -517,17 +554,21 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
     st.subheader("🎯 Take Profit / Stop Loss")
     auto_tpsl = bool_toggle("🤖 Auto TP/SL (ATR-based)", f"{strategy}_auto_tpsl", True)
     if auto_tpsl:
-        st.caption("Bot sets TP1/TP2/TP3 & SL automatically from market volatility "
-                   "(ATR), with partial closes at 50/30/20%.")
+        st.caption("🤖 Auto sets TP1/TP2/TP3 & SL from market volatility (ATR), "
+                   "with partial closes at 50/30/20%.")
     else:
+        rec_sl = 0.8 if strategy == "scalping" else 2.5
+        rec_tp = rec_sl * 2
         tp_pct = slider("TP %", f"{strategy}_tp_pct", 0.2, 20.0, 0.1,
                         db.get_float(f"{strategy}_tp_pct", 1.5 if strategy == "scalping" else 4.0))
         sl_pct = slider("SL %", f"{strategy}_sl_pct", 0.1, 10.0, 0.1, db.get_float(f"{strategy}_sl_pct"))
         net_tp = tp_pct - 0.08
         net_sl = sl_pct + 0.08
         rr = (net_tp / net_sl) if net_sl else 0.0
-        st.caption(f"After 0.08% round-trip fee → Net TP {net_tp:.2f}% / Net SL {net_sl:.2f}% "
-                   f"| Real R:R 1:{rr:.2f}")
+        st.info(f"💡 Recommended: TP **{rec_tp:.1f}%** · SL **{rec_sl:.1f}%** (R:R 1:2)")
+        if rr < 1.5:
+            st.warning(f"⚠️ R:R 1:{rr:.2f} is low — set TP ≥ {sl_pct*1.5:.1f}% to reach 1:1.5")
+        st.caption(f"After 0.08% fee → Net TP {net_tp:.2f}% / Net SL {net_sl:.2f}% | R:R 1:{rr:.2f}")
     bool_toggle("Auto Break-Even on TP1", f"{strategy}_auto_be", True)
 
     # Trailing stop
