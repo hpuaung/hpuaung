@@ -467,9 +467,10 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
     bool_toggle("Mean Reversion", f"{strategy}_reversion_on", True)
     bool_toggle("Breakout", f"{strategy}_breakout_on", True)
     st.markdown("---")
-    bool_toggle("🤖 AI Hybrid (LightGBM aggregates all enabled)", f"{strategy}_hybrid_on", True)
-    slider("AI Threshold", f"{strategy}_ai_threshold", 0.50, 0.95, 0.01,
-           db.get_float(f"{strategy}_ai_threshold", 0.75))
+    hybrid_on = bool_toggle("🤖 AI Hybrid (LightGBM aggregates all enabled)", f"{strategy}_hybrid_on", True)
+    if hybrid_on:
+        slider("AI Threshold (lower = more trades)", f"{strategy}_ai_threshold", 0.50, 0.95, 0.01,
+               db.get_float(f"{strategy}_ai_threshold", 0.75))
     st.markdown("---")
     news_on = bool_toggle("📰 News Filter", f"{strategy}_news_on", False)
     if news_on:
@@ -483,9 +484,10 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
     # Section 4 — Market Context
     st.divider()
     st.subheader("📡 Market Context")
-    bool_toggle("Use Funding/OI in Signal", f"{strategy}_funding_filter", False)
-    slider("Funding/OI Weight", f"{strategy}_funding_weight", 0.10, 0.30, 0.05,
-           db.get_float(f"{strategy}_funding_weight", 0.20))
+    funding_on = bool_toggle("Use Funding/OI in Signal", f"{strategy}_funding_filter", False)
+    if funding_on:
+        slider("Funding/OI Weight", f"{strategy}_funding_weight", 0.10, 0.30, 0.05,
+               db.get_float(f"{strategy}_funding_weight", 0.20))
     _market_context_display(strategy)
 
     # Section 5 — Risk Management
@@ -575,9 +577,10 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
     # Section 9 — Correlation Filter
     st.divider()
     st.subheader("🔗 Correlation Filter")
-    bool_toggle("Correlation Filter", f"{strategy}_corr_filter", True)
-    slider("Max same-direction trades", f"{strategy}_max_corr_trades", 1, 5, 1,
-           db.get_int(f"{strategy}_max_corr_trades", 2), is_int=True)
+    corr_on = bool_toggle("Correlation Filter", f"{strategy}_corr_filter", True)
+    if corr_on:
+        slider("Max same-direction trades", f"{strategy}_max_corr_trades", 1, 5, 1,
+               db.get_int(f"{strategy}_max_corr_trades", 2), is_int=True)
 
     # Section 10 — Live Trades
     st.divider()
