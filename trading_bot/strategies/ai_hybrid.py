@@ -141,24 +141,24 @@ def run(df_entry, trend_res, reversion_res, breakout_res,
         sent = 100.0 - sent
     cumulative = tech * 0.40 + struct * 0.30 + volsc * 0.20 + sent * 0.10
 
-    # The model acts as a soft VETO, not a hard gate: we only block a trade if
-    # the model is confidently predicting the OPPOSITE direction. Agreement or a
-    # neutral (HOLD) prediction lets the setup through. This keeps the bot
-    # trading on valid setups instead of waiting for perfect model agreement.
-    # Veto only when the model is *confidently* opposite (>= 0.65). A merely
-    # mild opposite lean (e.g. expecting a bounce at an oversold extreme) must
-    # not block a strong trend-following signal.
-    opposite = 0 if direction == "BUY" else 2  # SELL class vs BUY class
-    model_vetoes = (model is not None
-                    and lgbm_direction == opposite
-                    and lgbm_score >= 0.65)
+    # The model is a SOFT INFLUENCE on the score, not a hard veto: it nudges the
+    # cumulative up when it agrees and down when it disagrees, so a strong setup
+    # can still trade even if the model leans the other way (e.g. expecting an
+    # oversold bounce against a strong downtrend), while weak setups that the
+    # model dislikes are filtered out.
+    primary_class = 2 if direction == "BUY" else 0
+    opposite = 0 if direction == "BUY" else 2
+    if model is not None:
+        if lgbm_direction == primary_class:
+            cumulative += 10.0
+        elif lgbm_direction == opposite:
+            cumulative -= 12.0
 
-    # Step 4 — execution gate. The cumulative score measures *bullish* strength,
-    # which is naturally low for counter-trend (reversion) buys at a bottom, so a
-    # full threshold*100 floor would wrongly block them. Use a lenient floor
-    # (scaled by the threshold) and lean on the base strategy + model veto.
+    # Step 4 — execution gate. The cumulative score is bullish-biased and is
+    # naturally low for counter-trend (reversion) buys at a bottom, so use a
+    # lenient floor scaled by the threshold rather than a full threshold*100.
     cum_floor = ai_threshold * 60.0  # 0.50->30, 0.65->39, 0.75->45
-    if not (cumulative >= cum_floor and not model_vetoes):
+    if cumulative < cum_floor:
         return {**NONE, "score": cumulative, "lgbm_score": lgbm_score,
                 "market_type": market_type}
 
