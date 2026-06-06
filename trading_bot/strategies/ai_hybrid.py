@@ -84,7 +84,9 @@ def run(df_entry, trend_res, reversion_res, breakout_res,
     if not has_enough(df_entry):
         return dict(NONE)
 
-    # Step 1 — market type + primary strategy.
+    # Step 1 — market type + primary strategy. Prefer the market-routed
+    # strategy, but if it didn't fire, fall back to ANY enabled strategy that
+    # did (so a valid setup is never ignored just because of the routing).
     market_type = _detect_market(df_entry)
     if market_type == "TRENDING":
         primary = trend_res or dict(NONE)
@@ -92,6 +94,12 @@ def run(df_entry, trend_res, reversion_res, breakout_res,
         primary = breakout_res or dict(NONE)
     else:
         primary = reversion_res or dict(NONE)
+
+    if primary.get("signal", "NONE") == "NONE":
+        for r in (trend_res, reversion_res, breakout_res):
+            if r and r.get("signal", "NONE") != "NONE":
+                primary = r
+                break
 
     if primary.get("signal", "NONE") == "NONE":
         return dict(NONE)
@@ -133,15 +141,17 @@ def run(df_entry, trend_res, reversion_res, breakout_res,
         sent = 100.0 - sent
     cumulative = tech * 0.40 + struct * 0.30 + volsc * 0.20 + sent * 0.10
 
-    dir_matches = (
-        (direction == "BUY" and lgbm_direction == 2)
-        or (direction == "SELL" and lgbm_direction == 0)
-    )
+    # The model acts as a soft VETO, not a hard gate: we only block a trade if
+    # the model is confidently predicting the OPPOSITE direction. Agreement or a
+    # neutral (HOLD) prediction lets the setup through. This keeps the bot
+    # trading on valid setups instead of waiting for perfect model agreement.
+    opposite = 0 if direction == "BUY" else 2  # SELL class vs BUY class
+    model_vetoes = (model is not None
+                    and lgbm_direction == opposite
+                    and lgbm_score >= ai_threshold)
 
     # Step 4 — execution gate.
-    if not (cumulative >= ai_threshold * 100
-            and lgbm_score >= ai_threshold
-            and dir_matches):
+    if not (cumulative >= ai_threshold * 100 and not model_vetoes):
         return {**NONE, "score": cumulative, "lgbm_score": lgbm_score,
                 "market_type": market_type}
 

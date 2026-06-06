@@ -559,6 +559,9 @@ DEFAULTS = {
     "notify_status_on": "1",
     "notify_status_interval_hr": "4",
 
+    # Dashboard login (default 'admin'; set empty to disable the login screen)
+    "admin_password": "admin",
+
     # Simplified Auto controls (timeframe + TP/SL + trailing)
     "scalping_auto_tf": "1",
     "swing_auto_tf": "1",

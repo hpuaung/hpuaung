@@ -28,13 +28,30 @@ from models import train as lgbm
 st.set_page_config(page_title="Futures Bot", page_icon="📈", layout="wide",
                    initial_sidebar_state="collapsed")
 
-# Compact dark theme tweaks for mobile.
+# Compact, tight mobile layout — smaller metrics, less vertical gap, slim sliders.
 st.markdown(
     """
     <style>
-      .block-container {padding-top: 1rem; padding-bottom: 3rem; max-width: 900px;}
+      .block-container {padding-top: 0.6rem; padding-bottom: 2rem; max-width: 900px;}
       .stButton button {width: 100%;}
-      .metric-good {color:#16c784;} .metric-bad {color:#ea3943;}
+      /* tighten vertical rhythm */
+      [data-testid="stVerticalBlock"] {gap: 0.35rem;}
+      [data-testid="stHorizontalBlock"] {gap: 0.4rem;}
+      [data-testid="column"] {min-width: 0 !important;}
+      hr {margin: 0.45rem 0;}
+      h1 {font-size: 1.5rem; margin: 0.2rem 0;}
+      h2, h3 {margin-top: 0.5rem; margin-bottom: 0.2rem; font-size: 1.05rem;}
+      /* compact metrics so the dashboard fits without endless scrolling */
+      [data-testid="stMetricValue"] {font-size: 1.05rem; line-height: 1.1;}
+      [data-testid="stMetricLabel"] {font-size: 0.72rem;}
+      [data-testid="stMetricLabel"] p {font-size: 0.72rem;}
+      [data-testid="stMetricDelta"] {font-size: 0.7rem;}
+      /* slim sliders + toggles */
+      [data-testid="stSlider"] {padding-top: 0; padding-bottom: 0;}
+      [data-testid="stSlider"] label p {font-size: 0.8rem;}
+      [data-testid="stWidgetLabel"] p {font-size: 0.82rem; margin-bottom: 0;}
+      div[data-testid="stExpander"] {margin-bottom: 0.3rem;}
+      .stCaption, [data-testid="stCaptionContainer"] p {font-size: 0.72rem;}
     </style>
     """,
     unsafe_allow_html=True,
@@ -770,6 +787,13 @@ def tab_settings():
         st.caption(f"Current streak adj: {db.get_float('streak_risk_adj', 0):+.2f}% | "
                    f"Win streak {db.get_int('win_streak')} | Loss streak {db.get_int('loss_streak')}")
 
+    with st.expander("🔒 11. Login Password", expanded=False):
+        st.caption("Set the dashboard login password. Leave empty to disable login.")
+        text("Admin Password", "admin_password", password=True)
+        if st.button("🔓 Log out"):
+            st.session_state["authed"] = False
+            st.rerun()
+
     with st.expander("🧰 10. System Actions", expanded=False):
         c = st.columns(2)
         if c[0].button("🗑️ Clear Paper Trade History"):
@@ -804,7 +828,28 @@ def tab_settings():
 # ===========================================================================
 # Main navigation
 # ===========================================================================
+def _check_login():
+    """Password gate. Returns True if access is allowed (or login disabled)."""
+    pw = db.get_setting("admin_password", "")
+    if not pw:
+        return True
+    if st.session_state.get("authed"):
+        return True
+    st.title("🔒 Login")
+    st.caption("Enter the admin password to access the dashboard.")
+    entered = st.text_input("Password", type="password", key="login_pw")
+    if st.button("Login"):
+        if entered == pw:
+            st.session_state["authed"] = True
+            st.rerun()
+        else:
+            st.error("❌ Wrong password")
+    return False
+
+
 def main():
+    if not _check_login():
+        return
     st.title("📈 Binance Futures Bot")
     cols = st.columns([1, 3])
     if cols[0].button("🔄 Refresh"):
