@@ -934,6 +934,27 @@ def tab_settings():
             tg.notify_engine_stop("Emergency stop from dashboard")
             st.rerun()
 
+    with st.expander("💾 12. Backup & Restore (move to a new VPS/phone)", expanded=False):
+        st.caption("Everything the bot 'knows' lives in trading_bot.db (settings, API keys, "
+                   "all trade history / win-rate memory) and lgbm_model.pkl (the trained AI). "
+                   "Back these up to carry your account + learning to a new device.")
+        bcols = st.columns(2)
+        bcols[0].download_button("📥 Download DB Backup", db.export_backup_bytes(),
+                                 file_name="trading_bot.db", mime="application/octet-stream")
+        import os as _os
+        if _os.path.exists(lgbm.MODEL_PATH):
+            with open(lgbm.MODEL_PATH, "rb") as _mf:
+                bcols[1].download_button("🤖 Download AI Model", _mf.read(),
+                                         file_name="lgbm_model.pkl", mime="application/octet-stream")
+        else:
+            bcols[1].caption("No model file yet (Retrain to create).")
+
+        st.markdown("**Restore** — upload a previously downloaded `trading_bot.db`:")
+        up = st.file_uploader("Restore DB backup", type=["db"], key="restore_db")
+        if up is not None and st.button("⚠️ Restore & Overwrite"):
+            db.restore_backup_bytes(up.read())
+            st.success("Restored. Now restart the service: `systemctl restart futures-bot`")
+
     st.divider()
     if st.button("💾 SAVE ALL SETTINGS", type="primary"):
         tg.notify_settings_saved()

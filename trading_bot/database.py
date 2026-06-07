@@ -341,6 +341,44 @@ def clear_paper_trades():
         conn.commit()
 
 
+def export_backup_bytes():
+    """Return a consistent snapshot of the whole DB as bytes (sqlite backup API),
+    safe to download while the engine is running."""
+    import tempfile
+    conn = get_conn()
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+    tmp.close()
+    dst = sqlite3.connect(tmp.name)
+    with _db_lock:
+        conn.backup(dst)
+    dst.close()
+    with open(tmp.name, "rb") as f:
+        data = f.read()
+    os.remove(tmp.name)
+    return data
+
+
+def restore_backup_bytes(data: bytes):
+    """Overwrite the database file with an uploaded backup. The caller should
+    restart the process afterwards so all connections re-open cleanly."""
+    global _conn
+    with _db_lock:
+        try:
+            if _conn is not None:
+                _conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+        _conn = None
+        with open(DB_PATH, "wb") as f:
+            f.write(data)
+        # Drop any WAL/SHM side files so the restored DB is authoritative.
+        for ext in ("-wal", "-shm"):
+            try:
+                os.remove(DB_PATH + ext)
+            except OSError:
+                pass
+
+
 def paper_balance():
     """
     The simulated paper wallet = starting capital + realized PnL of all closed
