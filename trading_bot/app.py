@@ -204,8 +204,14 @@ def _persist_api_fields():
 # ===========================================================================
 def tab_dashboard():
     api_mode = _global_api_mode()
-    equity, err = live_equity(api_mode)
-    starting = db.get_float("starting_balance", equity or 0.0)
+    paper_mode_on = db.get_bool("paper_trading_mode", True)
+    starting = db.get_float("starting_balance", 0.0) or 5000.0
+    # In paper mode health/equity track the simulated paper wallet; in real mode
+    # they track the live wallet balance from the engine snapshot.
+    if paper_mode_on:
+        equity = db.paper_balance()
+    else:
+        equity, _err = live_equity(api_mode)
     health = risk_guard.health_ratio(equity, starting)
     color, zone = risk_guard.health_zone(health)
     pnl = risk_guard.today_pnl()
@@ -226,31 +232,27 @@ def tab_dashboard():
 
     test_bal = db.get_setting("last_equity_test", "")
     live_bal = db.get_setting("last_equity_live", "")
-    b1, b2 = st.columns(2)
-    b1.metric("🧪 Test Balance", _fmt_bal(test_bal))
-    b2.metric("💰 Live Balance", _fmt_bal(live_bal))
+    paper = db.get_bool("paper_trading_mode", True)
 
-    # Virtual (paper) equity = starting balance + cumulative paper PnL. This is
-    # what the simulated account would be worth — it moves as paper trades win
-    # or lose, even though the real testnet wallet balance never changes.
-    all_trades = db.get_trades()
-    total_net = sum(float(t.get("net_pnl") or 0) for t in all_trades)
-    virtual_equity = starting + total_net
-    v1, _ = st.columns(2)
-    v1.metric("📒 Virtual Equity (paper)", f"${virtual_equity:,.2f}",
-              f"{total_net:+,.2f} all-time")
-    c1, c2 = st.columns(2)
-    c1.metric("Today PnL", f"${pnl:,.2f}", f"{pnl_pct:+.2f}%")
+    b1, b2 = st.columns(2)
+    if paper:
+        # The simulated paper wallet that actually moves with wins/losses.
+        paper_bal = db.paper_balance()
+        realized = paper_bal - starting
+        b1.metric("📒 Paper Balance", f"${paper_bal:,.2f}", f"{realized:+,.2f} all-time")
+        b2.metric("Today PnL", f"${pnl:,.2f}", f"{pnl_pct:+.2f}%")
+        st.caption(f"📒 Paper wallet = ${starting:,.0f} start + realized PnL. It rises/falls "
+                   f"with each closed trade (testnet wallet stays {_fmt_bal(test_bal)}).")
+    else:
+        b1.metric("💰 Live Balance", _fmt_bal(live_bal))
+        b2.metric("Today PnL", f"${pnl:,.2f}", f"{pnl_pct:+.2f}%")
+
     dd = max(0.0, 100.0 - health)
-    c2.metric("Drawdown", f"{dd:.1f}%")
     emoji = {"green": "🟢", "yellow": "🟡", "orange": "🟠", "red": "🔴"}[color]
     st.progress(min(1.0, max(0.0, health / 100.0)),
-                text=f"{emoji} Health {health:.0f}% — {zone}")
-    st.caption("📒 Paper trades are simulated on real prices — they move Virtual "
-               "Equity & PnL, not the testnet wallet balance. Switch to REAL to "
-               "trade actual funds.")
-    if not test_bal and not live_bal:
-        st.caption("Add Binance API keys in ⚙️ Settings to see balances.")
+                text=f"{emoji} Health {health:.0f}% — {zone}  |  Drawdown {dd:.1f}%")
+    if paper and not test_bal:
+        st.caption("Add Binance Testnet API keys in ⚙️ Settings to fetch live prices.")
 
     # Section 2 — API Mode Status
     st.subheader("🔀 API Mode")

@@ -352,18 +352,24 @@ def _run_cycle():
     paper_mode = db.get_bool("paper_trading_mode", True)
 
     try:
-        equity = bc.get_equity(equity_mode)
+        real_equity = bc.get_equity(equity_mode)
         db.save_setting("binance_conn", "1")
         db.save_setting("binance_conn_msg", f"Connected ({equity_mode})")
     except Exception as e:  # noqa: BLE001
         db.log_event("EQUITY_ERROR", str(e))
         db.save_setting("binance_conn", "0")
         db.save_setting("binance_conn_msg", f"Not connected: {e}")
-        equity = db.get_float("starting_balance", 0.0)
+        real_equity = db.get_float("starting_balance", 0.0)
 
-    # Auto-read starting balance on first successful connect.
-    if db.get_float("starting_balance", 0.0) <= 0 and equity > 0:
-        db.save_setting("starting_balance", f"{equity:.2f}")
+    # Seed the starting capital once from the real wallet.
+    if db.get_float("starting_balance", 0.0) <= 0 and real_equity > 0:
+        db.save_setting("starting_balance", f"{real_equity:.2f}")
+
+    # In paper mode the bot trades a SIMULATED wallet (= starting capital +
+    # realized paper PnL), so sizing + health reflect paper performance and the
+    # account compounds; the real testnet wallet is untouched. In real mode the
+    # live wallet balance is used.
+    equity = db.paper_balance() if paper_mode else real_equity
 
     health = _enforce_health(equity)
     multiplier = risk_guard.health_multiplier(health)

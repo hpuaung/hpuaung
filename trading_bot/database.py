@@ -341,6 +341,23 @@ def clear_paper_trades():
         conn.commit()
 
 
+def paper_balance():
+    """
+    The simulated paper wallet = starting capital + realized PnL of all closed
+    paper trades. This is what the paper account is actually 'worth', so it goes
+    up and down with wins/losses (the real testnet wallet never moves on paper
+    trades). The engine uses this for sizing + health in paper mode, so the
+    account compounds just like a real one.
+    """
+    conn = get_conn()
+    starting = get_float("starting_balance", 0.0) or 0.0
+    if starting <= 0:
+        starting = 5000.0
+    row = conn.execute("SELECT COALESCE(SUM(net_pnl), 0) AS s FROM trades WHERE paper_mode=1").fetchone()
+    realized = float(row["s"] or 0.0)
+    return starting + realized
+
+
 def winrate(strategy=None, pair=None):
     """
     Historical win rate (%) and trade count for a context, read from the trades
