@@ -491,14 +491,18 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
     # Section 3 — Strategy Mix
     st.divider()
     st.subheader("🧩 Strategy Mix")
-    bool_toggle("Trend Following", f"{strategy}_trend_on", True)
-    bool_toggle("Mean Reversion", f"{strategy}_reversion_on", True)
-    bool_toggle("Breakout", f"{strategy}_breakout_on", True)
-    st.markdown("---")
-    hybrid_on = bool_toggle("🤖 AI Hybrid (LightGBM aggregates all enabled)", f"{strategy}_hybrid_on", True)
+    hybrid_on = bool_toggle("🤖 AI Hybrid (uses all 3 strategies automatically)", f"{strategy}_hybrid_on", True)
     if hybrid_on:
         slider("AI Threshold (lower = more trades)", f"{strategy}_ai_threshold", 0.50, 0.95, 0.01,
                db.get_float(f"{strategy}_ai_threshold", 0.75))
+        st.caption("🤖 AI Hybrid auto-runs Trend + Mean Reversion + Breakout and picks the best "
+                   "setup. No need to toggle them individually.")
+    else:
+        st.caption("Manual mode — pick which strategies trade (majority vote). "
+                   "Turn ON just one to test/learn a single strategy.")
+        bool_toggle("📈 Trend Following", f"{strategy}_trend_on", True)
+        bool_toggle("🔄 Mean Reversion", f"{strategy}_reversion_on", True)
+        bool_toggle("🚀 Breakout", f"{strategy}_breakout_on", True)
     st.markdown("---")
     news_on = bool_toggle("📰 News Filter", f"{strategy}_news_on", False)
     if news_on:
