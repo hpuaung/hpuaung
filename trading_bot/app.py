@@ -230,6 +230,15 @@ def tab_dashboard():
     b1.metric("🧪 Test Balance", _fmt_bal(test_bal))
     b2.metric("💰 Live Balance", _fmt_bal(live_bal))
 
+    # Virtual (paper) equity = starting balance + cumulative paper PnL. This is
+    # what the simulated account would be worth — it moves as paper trades win
+    # or lose, even though the real testnet wallet balance never changes.
+    all_trades = db.get_trades()
+    total_net = sum(float(t.get("net_pnl") or 0) for t in all_trades)
+    virtual_equity = starting + total_net
+    v1, _ = st.columns(2)
+    v1.metric("📒 Virtual Equity (paper)", f"${virtual_equity:,.2f}",
+              f"{total_net:+,.2f} all-time")
     c1, c2 = st.columns(2)
     c1.metric("Today PnL", f"${pnl:,.2f}", f"{pnl_pct:+.2f}%")
     dd = max(0.0, 100.0 - health)
@@ -237,6 +246,9 @@ def tab_dashboard():
     emoji = {"green": "🟢", "yellow": "🟡", "orange": "🟠", "red": "🔴"}[color]
     st.progress(min(1.0, max(0.0, health / 100.0)),
                 text=f"{emoji} Health {health:.0f}% — {zone}")
+    st.caption("📒 Paper trades are simulated on real prices — they move Virtual "
+               "Equity & PnL, not the testnet wallet balance. Switch to REAL to "
+               "trade actual funds.")
     if not test_bal and not live_bal:
         st.caption("Add Binance API keys in ⚙️ Settings to see balances.")
 
