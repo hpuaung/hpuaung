@@ -87,7 +87,10 @@ def aggregate_signal(symbol, strategy, df_entry, df_confirm, df_trend,
                                    ("Breakout", brk_res)]
             if res and res["signal"] != "NONE"
         )
-        ai_threshold = db.get_float(f"{strategy}_ai_threshold", 0.75)
+        if db.get_bool(f"{strategy}_auto_threshold", True):
+            ai_threshold = risk_guard.recommended_threshold(strategy)
+        else:
+            ai_threshold = db.get_float(f"{strategy}_ai_threshold", 0.75)
         final = ai_hybrid.run(
             df_entry, trend_res, rev_res, brk_res,
             funding_rate=funding_rate, oi_change_pct=oi_change,

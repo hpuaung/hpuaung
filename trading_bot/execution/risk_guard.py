@@ -238,3 +238,16 @@ def recommended_risk(strategy):
         elif wr > 60:
             rec = 1.5
     return rec
+
+
+def recommended_threshold(strategy):
+    """AI threshold adapted from win-rate history: be more selective when losing,
+    take more trades when winning. Moderate default while still learning."""
+    wr, n = db.winrate(strategy)
+    if n < 10 or wr is None:
+        return 0.60
+    if wr < 45:
+        return 0.72
+    if wr < 55:
+        return 0.65
+    return 0.55

@@ -493,8 +493,16 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
     st.subheader("🧩 Strategy Mix")
     hybrid_on = bool_toggle("🤖 AI Hybrid (uses all 3 strategies automatically)", f"{strategy}_hybrid_on", True)
     if hybrid_on:
-        slider("AI Threshold (lower = more trades)", f"{strategy}_ai_threshold", 0.50, 0.95, 0.01,
-               db.get_float(f"{strategy}_ai_threshold", 0.75))
+        auto_thr = bool_toggle("🤖 Auto AI Threshold", f"{strategy}_auto_threshold", True)
+        if auto_thr:
+            rt = risk_guard.recommended_threshold(strategy)
+            wr, n = db.winrate(strategy)
+            hist = f"win rate {wr:.0f}%/{n} trades" if (n and wr is not None) else "still learning"
+            st.caption(f"🤖 Auto threshold **{rt:.2f}** ({hist}). Lower = more trades when winning, "
+                       f"higher = pickier when losing.")
+        else:
+            slider("AI Threshold (lower = more trades)", f"{strategy}_ai_threshold", 0.50, 0.95, 0.01,
+                   db.get_float(f"{strategy}_ai_threshold", 0.75))
         st.caption("🤖 AI Hybrid auto-runs Trend + Mean Reversion + Breakout and picks the best "
                    "setup. No need to toggle them individually.")
     else:

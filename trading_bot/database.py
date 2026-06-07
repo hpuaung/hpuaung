@@ -611,6 +611,8 @@ DEFAULTS = {
     "scalping_trail_auto": "0",
     "swing_trail_auto": "0",
     "scalping_trail_pct": "0.5",
+    "scalping_auto_threshold": "1",
+    "swing_auto_threshold": "1",
 
     # Runtime/internal flags
     "blackout_active": "0",
