@@ -250,11 +250,16 @@ def tab_dashboard():
         realized = paper_bal - starting
         b1.metric("📒 Paper Balance", f"${paper_bal:,.2f}", f"{realized:+,.2f} all-time")
         b2.metric("Today PnL", f"${pnl:,.2f}", f"{pnl_pct:+.2f}%")
-        st.caption(f"📒 Paper wallet = ${starting:,.0f} start + realized PnL. It rises/falls "
-                   f"with each closed trade (testnet wallet stays {_fmt_bal(test_bal)}).")
+        # Also show the real wallet balances for reference.
+        t1, t2 = st.columns(2)
+        t1.metric("🧪 Test Balance", _fmt_bal(test_bal))
+        t2.metric("💰 Real Balance", _fmt_bal(live_bal))
+        st.caption(f"📒 Paper wallet = ${starting:,.0f} start + realized PnL (moves with each "
+                   f"closed trade). Test/Real = your actual Binance wallets.")
     else:
-        b1.metric("💰 Live Balance", _fmt_bal(live_bal))
+        b1.metric("💰 Real Balance", _fmt_bal(live_bal))
         b2.metric("Today PnL", f"${pnl:,.2f}", f"{pnl_pct:+.2f}%")
+        st.caption("🧪 Test Balance (testnet): " + _fmt_bal(test_bal))
 
     dd = max(0.0, 100.0 - health)
     emoji = {"green": "🟢", "yellow": "🟡", "orange": "🟠", "red": "🔴"}[color]
