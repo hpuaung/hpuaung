@@ -287,25 +287,28 @@ def tab_dashboard():
         db.save_setting("paper_trading_mode", "1")
         st.rerun()
 
-    # Section 3 — Pair Selection
+    # Section 3 — Pair Selection (checkbox list + explicit Save)
     st.subheader("🎯 Pair Selection (Max 10)")
     all_pairs = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT",
                  "DOGEUSDT", "LINKUSDT", "AVAXUSDT", "MATICUSDT", "DOTUSDT",
                  "LTCUSDT", "TRXUSDT", "ATOMUSDT"]
     selected = [p.strip() for p in db.get_setting("selected_pairs", "").split(",") if p.strip()]
-    grid = st.columns(4)
+    grid = st.columns(2)
+    checked = {}
     for i, p in enumerate(all_pairs):
-        on = p in selected
-        if grid[i % 4].button(("✅ " if on else "") + p, key=f"pair_{p}"):
-            if on:
-                selected.remove(p)
-            elif len(selected) < 10:
-                selected.append(p)
-            else:
-                st.toast("Max 10 pairs selected")
-            db.save_setting("selected_pairs", ",".join(selected))
+        checked[p] = grid[i % 2].checkbox(p, value=(p in selected), key=f"pairchk_{p}")
+    new_sel = [p for p in all_pairs if checked[p]]
+    st.caption(f"Ticked {len(new_sel)}/10")
+    if st.button("💾 Save Pairs", type="primary"):
+        if len(new_sel) > 10:
+            st.error("⚠️ Max 10 pairs — untick some.")
+        elif not new_sel:
+            st.error("Pick at least 1 pair.")
+        else:
+            db.save_setting("selected_pairs", ",".join(new_sel))
+            tg.send_message("🎯 <b>Pairs updated</b>\n" + ", ".join(new_sel))
+            st.success(f"Saved {len(new_sel)} pairs ✅ (Telegram notified)")
             st.rerun()
-    st.caption(f"Selected {len(selected)}/10")
 
     # Section 4 — Engine Status
     st.subheader("⚙️ Engine Status")
@@ -600,10 +603,15 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
             slider("Trailing distance %", f"{strategy}_trail_pct", 0.2, 5.0, 0.1,
                    db.get_float(f"{strategy}_trail_pct", 1.5 if strategy == "swing" else 0.5))
 
-    # Swing extras
+    # Swing extras — Max Hold Days (force-close a swing trade after N days)
     if swing:
-        slider("Max Hold Days", "swing_max_hold_days", 1, 30, 1,
-               db.get_int("swing_max_hold_days", 7), is_int=True)
+        auto_mh = bool_toggle("🤖 Auto Max Hold Days", "swing_auto_maxhold", True)
+        if auto_mh:
+            st.caption("🤖 Auto → force-close swing trades after **7 days** (so a trade never "
+                       "stays open forever).")
+        else:
+            slider("Max Hold Days", "swing_max_hold_days", 1, 30, 1,
+                   db.get_int("swing_max_hold_days", 7), is_int=True)
 
     # Section 8 — Session Filter
     st.divider()
