@@ -52,6 +52,15 @@ st.markdown(
       [data-testid="stWidgetLabel"] p {font-size: 0.82rem; margin-bottom: 0;}
       div[data-testid="stExpander"] {margin-bottom: 0.3rem;}
       .stCaption, [data-testid="stCaptionContainer"] p {font-size: 0.72rem;}
+      /* Move the tab bar to a fixed mobile-style bottom navigation. */
+      [data-testid="stTabs"] [data-baseweb="tab-list"] {
+          position: fixed; bottom: 0; left: 0; right: 0;
+          background: #ffffff; border-top: 1px solid #ddd;
+          z-index: 1000; justify-content: space-around;
+          padding: 2px 0; box-shadow: 0 -2px 6px rgba(0,0,0,0.06);
+      }
+      [data-testid="stTabs"] [data-baseweb="tab"] {padding: 6px 4px;}
+      .block-container {padding-bottom: 4.5rem !important;}
     </style>
     """,
     unsafe_allow_html=True,
@@ -783,12 +792,20 @@ def tab_settings():
         slider("Lev×Risk Hard Cap %", "lev_risk_hard_cap_pct", 5.0, 20.0, 0.5,
                db.get_float("lev_risk_hard_cap_pct", 10.0))
 
-    with st.expander("💵 5. Starting Balance Reference", expanded=False):
-        st.write(f"Current reference: ${db.get_float('starting_balance', 0):,.2f}")
-        st.caption("Health Ratio is based on this value.")
-        new_bal = st.number_input("Update Reference Balance", value=db.get_float("starting_balance", 0.0))
-        if st.button("📝 Update Reference Balance"):
+    with st.expander("💵 5. Starting Balance / Reset Paper Account", expanded=False):
+        st.write(f"Current paper start capital: **${db.get_float('starting_balance', 0):,.2f}**")
+        st.caption("Paper Balance & Health are based on this. Set it to the amount "
+                   "you plan to start REAL with (e.g. $50–$100) so paper mirrors reality.")
+        new_bal = st.number_input("Starting capital ($)", min_value=10.0, max_value=1000000.0,
+                                  value=float(db.get_float("starting_balance", 100.0) or 100.0), step=10.0)
+        cset = st.columns(2)
+        if cset[0].button("📝 Set Capital"):
             db.save_setting("starting_balance", f"{new_bal:.2f}")
+            st.rerun()
+        if cset[1].button("🔄 Reset Paper Account"):
+            db.clear_paper_trades()
+            db.save_setting("starting_balance", f"{new_bal:.2f}")
+            st.success(f"Paper account reset to ${new_bal:,.0f}, history cleared.")
             st.rerun()
 
     with st.expander("📱 6. Telegram", expanded=False):
