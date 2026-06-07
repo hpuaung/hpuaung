@@ -195,18 +195,25 @@ def process_position(pos, notifier=None):
             trail_pct = db.get_float(f"{strat}_trail_pct", 1.5)
         cur_trail = pos.get("trail_sl_price") or 0.0
         if d > 0:
-            new_trail = price * (1 - trail_pct / 100.0)
-            if new_trail > cur_trail:
-                db.update_position(pos["id"], {"trail_sl_price": new_trail})
-                cur_trail = new_trail
+            # Only start trailing once the trade is in profit by trail_pct, so a
+            # fresh position is not whipsawed out for a tiny loss right after
+            # entry. Until then the fixed SL protects the downside.
+            profit_trigger = entry * (1 + trail_pct / 100.0)
+            if price >= profit_trigger:
+                new_trail = price * (1 - trail_pct / 100.0)
+                if new_trail > cur_trail:
+                    db.update_position(pos["id"], {"trail_sl_price": new_trail})
+                    cur_trail = new_trail
             if cur_trail > 0 and price <= cur_trail:
                 _close_full(pos, cur_trail, "Trail", api_mode, notifier)
                 return
         else:
-            new_trail = price * (1 + trail_pct / 100.0)
-            if cur_trail == 0 or new_trail < cur_trail:
-                db.update_position(pos["id"], {"trail_sl_price": new_trail})
-                cur_trail = new_trail
+            profit_trigger = entry * (1 - trail_pct / 100.0)
+            if price <= profit_trigger:
+                new_trail = price * (1 + trail_pct / 100.0)
+                if cur_trail == 0 or new_trail < cur_trail:
+                    db.update_position(pos["id"], {"trail_sl_price": new_trail})
+                    cur_trail = new_trail
             if cur_trail > 0 and price >= cur_trail:
                 _close_full(pos, cur_trail, "Trail", api_mode, notifier)
                 return
