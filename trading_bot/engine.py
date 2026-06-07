@@ -233,6 +233,26 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health):
         db.log_signal(symbol, triggered or strategy, lgbm_score, news_score, "LOWWR_SKIP")
         return
 
+    # Self-learning: capture the market features of THIS entry so the outcome
+    # can be learned from when the trade closes.
+    entry_features = indicators.build_features(
+        df_entry, funding_rate=funding_rate, oi_change_pct=oi_change, sentiment_score=news_score)
+
+    # Win predictor: once a model has been trained on past wins/losses, only take
+    # setups it predicts are likely to WIN (learned from the bot's own history).
+    from models.train import get_win_model
+    wm = get_win_model()
+    if wm is not None and db.get_bool(f"{strategy}_win_filter", True):
+        try:
+            win_prob = float(wm.predict_proba([entry_features])[0][1])
+            min_wp = db.get_float("win_filter_min", 0.45)
+            if win_prob < min_wp:
+                db.log_event("WINPRED_SKIP", f"{symbol} {strategy} win_prob={win_prob:.2f} < {min_wp}")
+                db.log_signal(symbol, triggered or strategy, lgbm_score, win_prob, "WINPRED_SKIP")
+                return
+        except Exception:  # noqa: BLE001
+            pass
+
     session = _current_session()
 
     pos_id = orders.execute_order(
@@ -240,6 +260,7 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health):
         equity=equity, multiplier=multiplier, api_mode=api_mode,
         paper_mode=paper_mode, funding_rate=funding_rate, open_interest=oi_change,
         session=session, lgbm_score=lgbm_score, news_score=news_score, health=health,
+        entry_features=entry_features,
     )
     if pos_id:
         pos = db.get_position(pos_id)

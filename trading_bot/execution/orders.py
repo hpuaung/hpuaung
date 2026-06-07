@@ -109,7 +109,7 @@ def _take_profit(client, symbol, close_side, stop_price, qty=None, close_all=Fal
 
 def execute_order(symbol, strategy, signal, *, equity, multiplier, api_mode,
                   paper_mode, funding_rate=0.0, open_interest=0.0, session="",
-                  lgbm_score=0.0, news_score=0.0, health=100.0):
+                  lgbm_score=0.0, news_score=0.0, health=100.0, entry_features=None):
     """
     Place (or simulate) an order from a final signal. Returns the new
     active_positions row id, or None if blocked/failed.
@@ -149,6 +149,8 @@ def execute_order(symbol, strategy, signal, *, equity, multiplier, api_mode,
         "timeframe": tf,
         "atr_at_entry": atr_at_entry,
         "trailing_active": trail_auto,
+        "entry_features": (__import__("json").dumps([float(x) for x in entry_features])
+                           if entry_features is not None else None),
         "paper_mode": 1 if paper_mode else 0,
         "order_id": "",
         "health_at_entry": health,

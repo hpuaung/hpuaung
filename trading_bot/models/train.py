@@ -22,10 +22,75 @@ import database as db
 
 MODEL_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                           "lgbm_model.pkl")
+WIN_MODEL_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                              "win_model.pkl")
 
 _model = None
 _model_lock = threading.Lock()
 _training = False
+
+_win_model = None
+_win_lock = threading.Lock()
+_win_training = False
+
+
+# ---------------------------------------------------------------------------
+# Win predictor — trained on the bot's OWN entries (features) + outcome (win/loss)
+# ---------------------------------------------------------------------------
+def get_win_model():
+    global _win_model
+    with _win_lock:
+        if _win_model is None and os.path.exists(WIN_MODEL_PATH):
+            try:
+                import joblib
+                _win_model = joblib.load(WIN_MODEL_PATH)
+            except Exception as e:  # noqa: BLE001
+                db.log_event("WINMODEL_LOAD_ERROR", str(e))
+                _win_model = None
+        return _win_model
+
+
+def train_win_model():
+    """Train a binary classifier (entry features -> win/loss) on the learning
+    table, so the bot learns which entry conditions actually produce wins."""
+    global _win_model, _win_training
+    if _win_training:
+        return
+    _win_training = True
+    try:
+        import numpy as np
+        import lightgbm as lgb
+        import joblib
+        from sklearn.metrics import accuracy_score
+
+        X, y = db.learning_dataset()
+        if len(X) < 30 or len(set(y)) < 2:
+            return
+        X = np.array(X, dtype="float32")
+        y = np.array(y, dtype="int8")
+        model = lgb.LGBMClassifier(
+            n_estimators=80, max_depth=4, num_leaves=15, learning_rate=0.05,
+            class_weight="balanced", n_jobs=1, subsample=0.9, colsample_bytree=0.9,
+            verbose=-1,
+        )
+        model.fit(X, y)
+        acc = accuracy_score(y, model.predict(X))
+        joblib.dump(model, WIN_MODEL_PATH)
+        with _win_lock:
+            _win_model = model
+        db.save_setting("win_model_samples", str(len(X)))
+        db.save_setting("win_model_acc", f"{acc:.3f}")
+        db.log_event("WINMODEL_TRAIN", f"samples={len(X)} acc={acc:.3f}")
+    except Exception as e:  # noqa: BLE001
+        db.log_event("WINMODEL_ERROR", str(e))
+    finally:
+        _win_training = False
+
+
+def train_win_model_in_background():
+    if _win_training:
+        return
+    threading.Thread(target=train_win_model, daemon=True, name="winmodel-train").start()
 
 # Candle history per pair used for training (kept modest for RAM).
 _TRAIN_LIMIT = {"1m": 1000, "3m": 1000, "5m": 1500, "6m": 1500, "1y": 1500}

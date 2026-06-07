@@ -390,6 +390,17 @@ def _learning_progress():
         st.write(f"{'⚡' if strat=='scalping' else '📈'} **{strat.title()}**: "
                  f"{n} trades · {wr_txt} — {stage}")
         st.progress(min(1.0, n / 15.0))
+    # Self-learning win predictor (learns which entry conditions actually win).
+    n_learn = db.learning_count()
+    wm = lgbm.get_win_model()
+    if wm is not None:
+        st.success(f"🎯 Win Predictor ACTIVE — trained on {db.get_setting('win_model_samples','?')} "
+                   f"entries (train acc {db.get_setting('win_model_acc','?')}). The bot now skips "
+                   f"setups it predicts will lose.")
+    else:
+        st.info(f"🎯 Win Predictor: collecting entries ({n_learn}/30). Once 30 closed trades exist, "
+                f"the bot trains a model on your wins/losses and only takes high-win-probability "
+                f"setups — it then re-trains every 10 trades.")
     st.caption("More trades = smarter bot. Let it run on paper for ~2–4 weeks (≥50–100 "
                "trades) before judging; switch to REAL only after consistent positive PnL.")
 

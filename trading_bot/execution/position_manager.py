@@ -21,6 +21,15 @@ from execution import orders, risk_guard
 TAKER_FEE = 0.0004
 
 
+def _maybe_train_win_model():
+    """Retrain the win predictor every 10 new closed trades, once there are
+    enough samples to learn from."""
+    n = db.learning_count()
+    if n >= 30 and n % 10 == 0:
+        from models import train as _t
+        _t.train_win_model_in_background()
+
+
 def _api_mode(strategy):
     return "real" if db.get_setting(f"{strategy}_api_mode") == "real" else "test"
 
@@ -86,6 +95,14 @@ def _record_close(pos, qty, exit_price, reason, notifier=None):
     }
     db.insert_trade(trade)
     risk_guard.update_streak(net)
+    # Self-learning: pair the entry features with the win/loss outcome.
+    feats = pos.get("entry_features")
+    if feats:
+        try:
+            db.add_learning(pos["strategy"], pos["symbol"], feats, net > 0, net)
+            _maybe_train_win_model()
+        except Exception:  # noqa: BLE001
+            pass
     if notifier:
         try:
             notifier.notify_trade_close(trade)

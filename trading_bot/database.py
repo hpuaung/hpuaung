@@ -158,8 +158,66 @@ def init_db():
             )
         """)
 
+        # Self-learning memory: the market features at each entry + whether the
+        # resulting trade won. A model is trained on this so the bot learns which
+        # entry conditions actually produce wins.
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS learning (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT,
+                strategy  TEXT,
+                pair      TEXT,
+                features  TEXT,
+                won       INTEGER,
+                net_pnl   REAL
+            )
+        """)
+
+        # Migration: store the entry feature vector on the open position so it
+        # can be paired with the outcome when the trade closes.
+        try:
+            c.execute("ALTER TABLE active_positions ADD COLUMN entry_features TEXT")
+        except sqlite3.OperationalError:
+            pass  # column already exists
+
         conn.commit()
     _seed_defaults()
+
+
+# ---------------------------------------------------------------------------
+# Self-learning (entry features + win/loss outcome)
+# ---------------------------------------------------------------------------
+def add_learning(strategy, pair, features_json, won, net_pnl):
+    conn = get_conn()
+    with _db_lock:
+        conn.execute(
+            "INSERT INTO learning(timestamp, strategy, pair, features, won, net_pnl) "
+            "VALUES (?,?,?,?,?,?)",
+            (utcnow_str(), strategy, pair, features_json, 1 if won else 0, net_pnl),
+        )
+        conn.commit()
+
+
+def learning_count():
+    conn = get_conn()
+    return conn.execute("SELECT COUNT(*) AS n FROM learning").fetchone()["n"]
+
+
+def learning_dataset():
+    """Return (list_of_feature_lists, list_of_won) from the learning table."""
+    import json as _json
+    conn = get_conn()
+    rows = conn.execute("SELECT features, won FROM learning WHERE features IS NOT NULL").fetchall()
+    X, y = [], []
+    for r in rows:
+        try:
+            feats = _json.loads(r["features"])
+            if isinstance(feats, list) and feats:
+                X.append(feats)
+                y.append(int(r["won"]))
+        except Exception:  # noqa: BLE001
+            continue
+    return X, y
 
 
 # ---------------------------------------------------------------------------
@@ -652,6 +710,9 @@ DEFAULTS = {
     "scalping_auto_threshold": "1",
     "swing_auto_threshold": "1",
     "swing_auto_maxhold": "1",
+    "scalping_win_filter": "1",
+    "swing_win_filter": "1",
+    "win_filter_min": "0.45",
 
     # Runtime/internal flags
     "blackout_active": "0",
