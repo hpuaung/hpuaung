@@ -356,6 +356,10 @@ def tab_dashboard():
     st.subheader("📈 Performance Metrics")
     _performance_metrics()
 
+    # AI learning progress toward the adaptive thresholds.
+    st.subheader("🧠 AI Learning Progress")
+    _learning_progress()
+
     # Section 8 — Pair Performance Ranking
     st.subheader("🏆 Pair Ranking")
     _pair_ranking()
@@ -369,6 +373,25 @@ def tab_dashboard():
     csv_bytes = _trades_csv()
     st.download_button("📥 Download Trade Report CSV", csv_bytes,
                        file_name="trade_report.csv", mime="text/csv")
+
+
+def _learning_progress():
+    """Show how much trade data the bot has gathered toward its adaptive
+    win-rate learning (10 trades = threshold adapts, 15 = risk + pair filter)."""
+    for strat in ("scalping", "swing"):
+        wr, n = db.winrate(strat)
+        wr_txt = f"{wr:.0f}% win" if (n and wr is not None) else "—"
+        if n >= 15:
+            stage = "✅ Fully adaptive (risk + pair filter active)"
+        elif n >= 10:
+            stage = "🟡 Threshold adapting (need 15 for risk/pair learning)"
+        else:
+            stage = "🔵 Collecting data (need 10 to start adapting)"
+        st.write(f"{'⚡' if strat=='scalping' else '📈'} **{strat.title()}**: "
+                 f"{n} trades · {wr_txt} — {stage}")
+        st.progress(min(1.0, n / 15.0))
+    st.caption("More trades = smarter bot. Let it run on paper for ~2–4 weeks (≥50–100 "
+               "trades) before judging; switch to REAL only after consistent positive PnL.")
 
 
 def _performance_metrics():
