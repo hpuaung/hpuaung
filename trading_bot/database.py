@@ -174,11 +174,12 @@ def init_db():
         """)
 
         # Migration: store the entry feature vector on the open position so it
-        # can be paired with the outcome when the trade closes.
-        try:
+        # can be paired with the outcome when the trade closes. Check the column
+        # via PRAGMA (no failing ALTER on every init, which could leave the
+        # streamlit process's transaction state dirty and silently drop writes).
+        existing_cols = {r[1] for r in c.execute("PRAGMA table_info(active_positions)").fetchall()}
+        if "entry_features" not in existing_cols:
             c.execute("ALTER TABLE active_positions ADD COLUMN entry_features TEXT")
-        except sqlite3.OperationalError:
-            pass  # column already exists
 
         conn.commit()
     _seed_defaults()

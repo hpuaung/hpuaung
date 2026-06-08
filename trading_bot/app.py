@@ -972,16 +972,21 @@ def tab_settings():
         st.caption("Everything the bot 'knows' lives in trading_bot.db (settings, API keys, "
                    "all trade history / win-rate memory) and lgbm_model.pkl (the trained AI). "
                    "Back these up to carry your account + learning to a new device.")
-        bcols = st.columns(2)
-        bcols[0].download_button("📥 Download DB Backup", db.export_backup_bytes(),
-                                 file_name="trading_bot.db", mime="application/octet-stream")
+        # Generate the backup only on demand (not on every render — that held the
+        # DB lock each time the Settings tab loaded).
+        if st.button("🗜️ Prepare DB Backup"):
+            try:
+                st.session_state["_dbbackup"] = db.export_backup_bytes()
+            except Exception as e:  # noqa: BLE001
+                st.error(f"Backup failed: {e}")
+        if st.session_state.get("_dbbackup"):
+            st.download_button("📥 Download DB Backup", st.session_state["_dbbackup"],
+                               file_name="trading_bot.db", mime="application/octet-stream")
         import os as _os
         if _os.path.exists(lgbm.MODEL_PATH):
             with open(lgbm.MODEL_PATH, "rb") as _mf:
-                bcols[1].download_button("🤖 Download AI Model", _mf.read(),
-                                         file_name="lgbm_model.pkl", mime="application/octet-stream")
-        else:
-            bcols[1].caption("No model file yet (Retrain to create).")
+                st.download_button("🤖 Download AI Model", _mf.read(),
+                                   file_name="lgbm_model.pkl", mime="application/octet-stream")
 
         st.markdown("**Restore** — upload a previously downloaded `trading_bot.db`:")
         up = st.file_uploader("Restore DB backup", type=["db"], key="restore_db")
