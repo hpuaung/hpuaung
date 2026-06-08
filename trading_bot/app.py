@@ -339,19 +339,6 @@ def tab_dashboard():
     else:
         st.caption("No open positions.")
 
-    # Section 6 — Recent Signals
-    st.subheader("🛰️ Recent Signals")
-    sigs = db.get_recent_signals(10)
-    if sigs:
-        st.dataframe(
-            [{"Time": s["timestamp"][11:], "Pair": s["pair"], "Strategies": s["strategies"],
-              "AI": round(s["ai_score"] or 0, 2), "News": round(s["news_score"] or 0, 2),
-              "Action": s["action"]} for s in sigs],
-            use_container_width=True, hide_index=True,
-        )
-    else:
-        st.caption("No signals yet.")
-
     # Section 7 — Performance Metrics
     st.subheader("📈 Performance Metrics")
     _performance_metrics()
