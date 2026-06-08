@@ -111,11 +111,17 @@ def number(label, key, default, is_int=False):
     return st.session_state[ss]
 
 
-def text(label, key, password=False, default=""):
+def text(label, key, password=False, default="", show_saved=False):
     ss = f"w_{key}"
     _init(ss, db.get_setting(key, default))
     st.text_input(label, key=ss, type="password" if password else "default",
                   on_change=lambda: db.save_setting(key, st.session_state[ss]))
+    if show_saved:
+        cur = db.get_setting(key, "")
+        if cur:
+            st.caption(f"✅ Saved ({len(cur)} chars, hidden for security)")
+        else:
+            st.caption("— not set yet")
     return st.session_state[ss]
 
 
@@ -204,7 +210,7 @@ def _persist_api_fields():
     for k in ("binance_testnet_api", "binance_testnet_secret",
               "binance_live_api", "binance_live_secret"):
         v = st.session_state.get(f"w_{k}")
-        if v is not None:
+        if v:  # only save a non-empty field — never erase a saved key with a blank box
             db.save_setting(k, v)
 
 
@@ -770,8 +776,8 @@ def tab_settings():
 
     with st.expander("🔌 1. API Configuration", expanded=False):
         st.markdown("**🧪 Testnet**")
-        text("Testnet API Key", "binance_testnet_api", password=True)
-        text("Testnet Secret", "binance_testnet_secret", password=True)
+        text("Testnet API Key", "binance_testnet_api", password=True, show_saved=True)
+        text("Testnet Secret", "binance_testnet_secret", password=True, show_saved=True)
         _conn_badge("test")
         if st.button("🔌 Test / Save Testnet"):
             _persist_api_fields()
@@ -781,8 +787,8 @@ def tab_settings():
             db.save_setting("conn_test_msg", msg)
             st.rerun()
         st.markdown("**💰 Live API**")
-        text("Live API Key", "binance_live_api", password=True)
-        text("Live Secret", "binance_live_secret", password=True)
+        text("Live API Key", "binance_live_api", password=True, show_saved=True)
+        text("Live Secret", "binance_live_secret", password=True, show_saved=True)
         _conn_badge("live")
         if st.button("🔌 Test / Save Live"):
             _persist_api_fields()
@@ -804,9 +810,9 @@ def tab_settings():
             st.rerun()
 
     with st.expander("📰 2. News & AI APIs", expanded=False):
-        text("GNews API Key", "gnews_api", password=True)
+        text("GNews API Key", "gnews_api", password=True, show_saved=True)
         st.caption(f"Today: {news.gnews_requests_today()}/100 requests | Cache 30min")
-        text("HuggingFace Token", "hf_token", password=True)
+        text("HuggingFace Token", "hf_token", password=True, show_saved=True)
         st.caption("Model: ProsusAI/finbert via API (cloud call, no local model)")
         st.caption(f"HF this month: {news.hf_requests_month()}/30000 | "
                    f"Status: {'🟢' if db.get_setting('hf_token') else '🔴'}")
@@ -855,8 +861,8 @@ def tab_settings():
             st.rerun()
 
     with st.expander("📱 6. Telegram", expanded=False):
-        text("Bot Token", "telegram_token", password=True)
-        text("Chat ID", "telegram_chat_id", password=True)
+        text("Bot Token", "telegram_token", password=True, show_saved=True)
+        text("Chat ID", "telegram_chat_id", password=True, show_saved=True)
         bool_toggle("Notify Trade Open (entry)", "notify_trade_open", True)
         bool_toggle("Notify Trade Close", "notify_trade_close", True)
         bool_toggle("Notify Daily Report (00:00 UTC)", "notify_daily_report", True)
