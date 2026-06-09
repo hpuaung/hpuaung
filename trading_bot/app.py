@@ -228,18 +228,21 @@ def tab_dashboard():
     starting = db.get_float("starting_balance", 0.0) or 5000.0
     paper_bal = db.paper_balance()
 
-    # When any engine is in real mode, health is based on real equity so that
-    # the dashboard reflects what the engine actually guards against.
-    any_real = (scalp_mode == "real" or swing_mode == "real")
-    if any_real:
-        _real_str = db.get_setting("last_equity_live", "")
-        try:
-            primary_bal = float(_real_str) if _real_str and _real_str != "ERR" else paper_bal
-        except (TypeError, ValueError):
-            primary_bal = paper_bal
-    else:
-        primary_bal = paper_bal
+    scalp_real = (scalp_mode == "real")
+    swing_real = (swing_mode == "real")
+    any_real = scalp_real or swing_real
+    all_real = scalp_real and swing_real
+    mixed = any_real and not all_real   # one engine real, one paper
 
+    # Health guard always uses real equity when any real engine is active
+    # (real money is at risk — that's what matters for the daily loss / drawdown guards).
+    _live_str = db.get_setting("last_equity_live", "")
+    try:
+        real_bal = float(_live_str) if _live_str and _live_str != "ERR" else None
+    except (TypeError, ValueError):
+        real_bal = None
+
+    primary_bal = real_bal if any_real and real_bal else paper_bal
     health = risk_guard.health_ratio(primary_bal, starting)
     color, zone = risk_guard.health_zone(health)
     pnl = risk_guard.today_pnl()
@@ -260,13 +263,29 @@ def tab_dashboard():
 
     # Section 1 — Account Health
     st.subheader("📊 Account Health")
-    b1, b2 = st.columns(2)
-    if any_real:
-        b1.metric("💰 Real Balance (Active)", f"${primary_bal:,.2f}",
-                  f"{primary_bal - starting:+,.2f} vs start")
+
+    if mixed:
+        # Mixed mode: show real balance + paper balance side by side.
+        # Health is based on real (since real money is what the guard protects).
+        ma, mb, mc = st.columns(3)
+        _rb = f"${real_bal:,.2f}" if real_bal else "— (no key)"
+        _rb_delta = f"{real_bal - starting:+,.2f} vs start" if real_bal else ""
+        ma.metric("💰 Real Balance", _rb, _rb_delta)
+        mb.metric("📒 Paper Balance", f"${paper_bal:,.2f}", f"{paper_bal - starting:+,.2f} all-time")
+        mc.metric("Today PnL", f"${pnl:,.2f}", f"{pnl_pct:+.2f}%")
+        # Which engine runs which mode
+        scalp_lbl = "⚡ Scalp=REAL" if scalp_real else "⚡ Scalp=Paper"
+        swing_lbl = "📈 Swing=REAL" if swing_real else "📈 Swing=Paper"
+        st.caption(f"Mixed mode: {scalp_lbl} | {swing_lbl} — Health based on Real balance")
     else:
-        b1.metric("📒 Paper Balance", f"${paper_bal:,.2f}", f"{paper_bal - starting:+,.2f} all-time")
-    b2.metric("Today PnL", f"${pnl:,.2f}", f"{pnl_pct:+.2f}%")
+        b1, b2 = st.columns(2)
+        if any_real:
+            b1.metric("💰 Real Balance", f"${primary_bal:,.2f}",
+                      f"{primary_bal - starting:+,.2f} vs start")
+        else:
+            b1.metric("📒 Paper Balance", f"${paper_bal:,.2f}",
+                      f"{paper_bal - starting:+,.2f} all-time")
+        b2.metric("Today PnL", f"${pnl:,.2f}", f"{pnl_pct:+.2f}%")
 
     # Real wallet balances are shown ONLY when the matching API keys exist.
     wallet = []
@@ -284,7 +303,7 @@ def tab_dashboard():
 
     dd = max(0.0, 100.0 - health)
     emoji = {"green": "🟢", "yellow": "🟡", "orange": "🟠", "red": "🔴"}[color]
-    mode_label = "Real" if any_real else "Paper"
+    mode_label = "Mixed→Real" if mixed else ("Real" if any_real else "Paper")
     st.progress(min(1.0, max(0.0, health / 100.0)),
                 text=f"{emoji} Health {health:.0f}% ({mode_label}) — {zone}  |  Drawdown {dd:.1f}%")
 
