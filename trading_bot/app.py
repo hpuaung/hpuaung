@@ -227,10 +227,23 @@ def tab_dashboard():
     swing_mode = db.get_setting("swing_mode", "paper")
     starting = db.get_float("starting_balance", 0.0) or 5000.0
     paper_bal = db.paper_balance()
-    health = risk_guard.health_ratio(paper_bal, starting)
+
+    # When any engine is in real mode, health is based on real equity so that
+    # the dashboard reflects what the engine actually guards against.
+    any_real = (scalp_mode == "real" or swing_mode == "real")
+    if any_real:
+        _real_str = db.get_setting("last_equity_live", "")
+        try:
+            primary_bal = float(_real_str) if _real_str and _real_str != "ERR" else paper_bal
+        except (TypeError, ValueError):
+            primary_bal = paper_bal
+    else:
+        primary_bal = paper_bal
+
+    health = risk_guard.health_ratio(primary_bal, starting)
     color, zone = risk_guard.health_zone(health)
     pnl = risk_guard.today_pnl()
-    pnl_pct = (pnl / paper_bal * 100.0) if paper_bal else 0.0
+    pnl_pct = (pnl / primary_bal * 100.0) if primary_bal else 0.0
 
     def _fmt_bal(v):
         if v in ("", None):
@@ -248,7 +261,11 @@ def tab_dashboard():
     # Section 1 — Account Health
     st.subheader("📊 Account Health")
     b1, b2 = st.columns(2)
-    b1.metric("📒 Paper Balance", f"${paper_bal:,.2f}", f"{paper_bal - starting:+,.2f} all-time")
+    if any_real:
+        b1.metric("💰 Real Balance (Active)", f"${primary_bal:,.2f}",
+                  f"{primary_bal - starting:+,.2f} vs start")
+    else:
+        b1.metric("📒 Paper Balance", f"${paper_bal:,.2f}", f"{paper_bal - starting:+,.2f} all-time")
     b2.metric("Today PnL", f"${pnl:,.2f}", f"{pnl_pct:+.2f}%")
 
     # Real wallet balances are shown ONLY when the matching API keys exist.
@@ -267,8 +284,9 @@ def tab_dashboard():
 
     dd = max(0.0, 100.0 - health)
     emoji = {"green": "🟢", "yellow": "🟡", "orange": "🟠", "red": "🔴"}[color]
+    mode_label = "Real" if any_real else "Paper"
     st.progress(min(1.0, max(0.0, health / 100.0)),
-                text=f"{emoji} Health {health:.0f}% — {zone}  |  Drawdown {dd:.1f}%")
+                text=f"{emoji} Health {health:.0f}% ({mode_label}) — {zone}  |  Drawdown {dd:.1f}%")
 
     # Section 2 — Per-engine trade mode (independent Paper/Real)
     st.subheader("🔁 Trade Mode (per engine)")
