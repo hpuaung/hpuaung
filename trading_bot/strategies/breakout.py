@@ -76,8 +76,13 @@ def run(df_entry, df_confirm=None, df_trend=None, mtf=False):
     confirm_below = True
     if df_confirm is not None and has_enough(df_confirm, need=20):
         c_close = safe(df_confirm["close"])
-        confirm_above = c_close > resistance
-        confirm_below = c_close < support
+        c_ema21 = safe(df_confirm.get("ema21"), default=c_close)
+        c_rsi = safe(df_confirm.get("rsi"), default=50.0)
+        # Confirm that the higher TF is trending in the breakout direction rather
+        # than requiring it to have already crossed the 4h level (which would mean
+        # the move is already over by the time the signal fires on the entry frame).
+        confirm_above = (c_close >= c_ema21 * 0.995) and (c_rsi >= 47)
+        confirm_below = (c_close <= c_ema21 * 1.005) and (c_rsi <= 53)
 
     vol_spike = volume > vol_ma * 1.5
     atr_expand = atr > atr_ref * 1.1

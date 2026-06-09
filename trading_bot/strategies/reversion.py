@@ -27,14 +27,20 @@ def run(df_entry, df_confirm=None, df_trend=None, mtf=False):
     if df_confirm is not None and has_enough(df_confirm, need=60):
         confirm_rsi = safe(df_confirm.get("rsi"), default=50.0)
 
-    # Oversold BUY (thresholds slightly relaxed so range markets actually fire)
+    # Oversold BUY — require 3 of 5 indicators to agree (majority vote).
+    # The old 5-condition AND was too strict for 4h swing candles where all
+    # five rarely coincide simultaneously; scalping on 5m is fine since noise
+    # causes frequent extreme readings, but 4h candles are more deliberate.
+    _oversold_signals = [
+        rsi <= 40,
+        close <= bb_lower * 1.005,
+        stoch_k < 30,
+        cci < -80,
+        close < ema21 * 0.99,
+    ]
     oversold = (
-        rsi <= 35
-        and close <= bb_lower * 1.003
-        and stoch_k < 25
-        and cci < -80
-        and close < ema21 * 0.99
-        and (confirm_rsi is None or confirm_rsi <= 45)
+        sum(_oversold_signals) >= 3
+        and (confirm_rsi is None or confirm_rsi <= 50)
     )
     if oversold:
         return {
@@ -46,14 +52,17 @@ def run(df_entry, df_confirm=None, df_trend=None, mtf=False):
             "tp3": bb_upper,
         }
 
-    # Overbought SELL (mirrored, slightly relaxed)
+    # Overbought SELL — mirrored majority vote (3 of 5).
+    _overbought_signals = [
+        rsi >= 60,
+        close >= bb_upper * 0.995,
+        stoch_k > 70,
+        cci > 80,
+        close > ema21 * 1.01,
+    ]
     overbought = (
-        rsi >= 65
-        and close >= bb_upper * 0.997
-        and stoch_k > 75
-        and cci > 80
-        and close > ema21 * 1.01
-        and (confirm_rsi is None or confirm_rsi >= 55)
+        sum(_overbought_signals) >= 3
+        and (confirm_rsi is None or confirm_rsi >= 50)
     )
     if overbought:
         return {

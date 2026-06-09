@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>Trading Bot</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --surface2: #21262d;
+      --border: #30363d;
+      --green: #3fb950;
+      --green-glow: rgba(63,185,80,0.2);
+      --red: #f85149;
+      --yellow: #d29922;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --radius: 10px;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;
+      height: 100dvh;
+      overflow: hidden;
+      user-select: none;
+    }
+
+    /* ═══════════════════════════
+       SETUP SCREEN
+    ═══════════════════════════ */
+    #setup {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100dvh;
+      padding: 24px 20px;
+      padding-top: calc(24px + env(safe-area-inset-top));
+      padding-bottom: calc(24px + env(safe-area-inset-bottom));
+    }
+
+    .logo-wrap {
+      font-size: 68px;
+      line-height: 1;
+      margin-bottom: 14px;
+      filter: drop-shadow(0 0 20px rgba(63,185,80,0.35));
+    }
+    .app-name {
+      font-size: 26px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      margin-bottom: 6px;
+    }
+    .app-desc {
+      font-size: 14px;
+      color: var(--muted);
+      text-align: center;
+      margin-bottom: 36px;
+      line-height: 1.5;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 22px 20px;
+      width: 100%;
+      max-width: 420px;
+    }
+    .card-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 18px;
+    }
+
+    .field-wrap { margin-bottom: 14px; }
+    .field-label {
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 6px;
+      display: block;
+    }
+    .field-input {
+      width: 100%;
+      background: var(--bg);
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-size: 16px;
+      padding: 13px 14px;
+      outline: none;
+      transition: border-color 0.18s;
+      -webkit-appearance: none;
+    }
+    .field-input:focus { border-color: var(--green); }
+    .field-input::placeholder { color: var(--muted); }
+
+    .btn-connect {
+      width: 100%;
+      background: var(--green);
+      color: #0d1117;
+      font-weight: 700;
+      font-size: 16px;
+      border: none;
+      border-radius: var(--radius);
+      padding: 15px;
+      cursor: pointer;
+      letter-spacing: 0.02em;
+      transition: opacity 0.15s, transform 0.1s;
+      margin-top: 6px;
+    }
+    .btn-connect:active { opacity: 0.82; transform: scale(0.98); }
+
+    .error-msg {
+      color: var(--red);
+      font-size: 13px;
+      margin-top: 10px;
+      text-align: center;
+      display: none;
+      padding: 10px;
+      background: rgba(248,81,73,0.1);
+      border-radius: 8px;
+      border: 1px solid rgba(248,81,73,0.2);
+    }
+
+    .hint-box {
+      margin-top: 16px;
+      padding: 12px 14px;
+      background: var(--surface2);
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+    }
+    .hint-box p {
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+    .hint-box code {
+      font-family: 'SF Mono', Menlo, monospace;
+      font-size: 12px;
+      color: var(--green);
+      background: rgba(63,185,80,0.12);
+      padding: 1px 5px;
+      border-radius: 4px;
+    }
+
+    /* ═══════════════════════════
+       DASHBOARD SCREEN
+    ═══════════════════════════ */
+    #dashboard {
+      display: none;
+      flex-direction: column;
+      height: 100dvh;
+    }
+
+    .topbar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 16px;
+      height: calc(50px + env(safe-area-inset-top));
+      padding-top: env(safe-area-inset-top);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+    }
+    .topbar-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .status-indicator {
+      position: relative;
+      width: 10px;
+      height: 10px;
+    }
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--yellow);
+      transition: background 0.4s;
+    }
+    .status-dot.online { background: var(--green); }
+    .status-dot.offline { background: var(--red); }
+    .status-dot.online::after {
+      content: '';
+      position: absolute;
+      inset: -3px;
+      border-radius: 50%;
+      background: var(--green-glow);
+      animation: ripple 2s ease-out infinite;
+    }
+    @keyframes ripple {
+      0% { transform: scale(1); opacity: 0.8; }
+      100% { transform: scale(2.2); opacity: 0; }
+    }
+    .topbar-title {
+      font-weight: 700;
+      font-size: 16px;
+      letter-spacing: -0.3px;
+    }
+    .topbar-sub {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 1px;
+    }
+
+    .topbar-actions { display: flex; gap: 8px; }
+    .icon-btn {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .icon-btn:active { background: var(--surface2); }
+
+    .frame-wrap {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+    }
+    #dash-frame {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      border: none;
+      background: var(--bg);
+    }
+
+    /* Loading overlay */
+    .loading-overlay {
+      position: absolute;
+      inset: 0;
+      background: var(--bg);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      z-index: 20;
+      transition: opacity 0.35s;
+    }
+    .loading-overlay.hidden { opacity: 0; pointer-events: none; }
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid var(--border);
+      border-top-color: var(--green);
+      border-radius: 50%;
+      animation: spin 0.75s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-text { font-size: 14px; color: var(--muted); }
+    .loading-url {
+      font-size: 12px;
+      color: var(--border);
+      font-family: 'SF Mono', Menlo, monospace;
+      max-width: 260px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      text-align: center;
+    }
+
+    /* Error overlay */
+    .error-overlay {
+      position: absolute;
+      inset: 0;
+      background: var(--bg);
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      z-index: 21;
+      padding: 24px;
+    }
+    .error-icon { font-size: 48px; }
+    .error-title { font-size: 18px; font-weight: 600; }
+    .error-body { font-size: 14px; color: var(--muted); text-align: center; line-height: 1.6; }
+    .btn-retry {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 600;
+      padding: 12px 28px;
+      cursor: pointer;
+      margin-top: 4px;
+    }
+    .btn-retry:active { opacity: 0.7; }
+
+    /* Bottom safe area spacer for iOS */
+    .safe-bottom {
+      height: env(safe-area-inset-bottom);
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+  </style>
+</head>
+<body>
+
+<!-- ═════════════════════════════════
+     SETUP / LOGIN SCREEN
+═════════════════════════════════ -->
+<div id="setup">
+  <div class="logo-wrap">🤖</div>
+  <div class="app-name">Trading Bot</div>
+  <div class="app-desc">
+    Binance Futures Dashboard<br>
+    VPS နဲ့ ချိတ်ဆက်ပြီး dashboard ဖွင့်ပါ
+  </div>
+
+  <div class="card">
+    <div class="card-title">🔗 VPS Connection</div>
+
+    <div class="field-wrap">
+      <label class="field-label" for="vps-input">VPS Address (IP:Port)</label>
+      <input
+        type="text"
+        id="vps-input"
+        class="field-input"
+        placeholder="150.95.84.241:8080"
+        autocomplete="off"
+        autocapitalize="none"
+        autocorrect="off"
+        spellcheck="false"
+        inputmode="url"
+      >
+    </div>
+
+    <div id="setup-error" class="error-msg"></div>
+
+    <button class="btn-connect" onclick="connect()">
+      🚀 Connect to Dashboard
+    </button>
+
+    <div class="hint-box" style="margin-top:14px;">
+      <p>
+        ✅ VPS address ထည့်ပြီး Connect နှိပ်ပါ<br>
+        ✅ Dashboard ဖွင့်လာပြီဆိုရင် Password ရှိပါက Streamlit login screen ပေါ်လာမည်<br>
+        ✅ ⚙ icon နှိပ်ပြီး VPS address ပြောင်းနိုင်သည်<br><br>
+        ဥပမာ: <code>150.95.84.241:8080</code>
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- ═════════════════════════════════
+     DASHBOARD SCREEN
+═════════════════════════════════ -->
+<div id="dashboard">
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="status-indicator">
+        <div class="status-dot" id="status-dot"></div>
+      </div>
+      <div>
+        <div class="topbar-title">Trading Bot</div>
+        <div class="topbar-sub" id="vps-label">Connecting…</div>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <button class="icon-btn" onclick="refreshFrame()" title="Refresh">⟳</button>
+      <button class="icon-btn" onclick="showSetup()" title="Change Server">⚙</button>
+    </div>
+  </div>
+
+  <div class="frame-wrap">
+    <!-- Loading state -->
+    <div class="loading-overlay" id="loading-overlay">
+      <div class="spinner"></div>
+      <div class="loading-text">Dashboard loading…</div>
+      <div class="loading-url" id="loading-url-text"></div>
+    </div>
+
+    <!-- Connection error state -->
+    <div class="error-overlay" id="error-overlay">
+      <div class="error-icon">🔌</div>
+      <div class="error-title">Connection Failed</div>
+      <div class="error-body" id="error-body">
+        VPS ကို ချိတ်ဆက်မရပါ။<br>
+        VPS ဖွင့်ထားကြောင်း နှင့် bot service run နေကြောင်း စစ်ပါ။
+      </div>
+      <button class="btn-retry" onclick="retryConnect()">↺ Retry</button>
+      <button class="btn-retry" onclick="showSetup()" style="background:transparent;border:none;color:var(--muted);font-weight:400;">Change Server</button>
+    </div>
+
+    <iframe
+      id="dash-frame"
+      src=""
+      onload="onFrameLoad()"
+      allow="clipboard-write; clipboard-read"
+    ></iframe>
+  </div>
+
+  <div class="safe-bottom"></div>
+</div>
+
+<script>
+  const STORAGE_KEY = 'tb_vps_v2';
+  let _currentUrl = '';
+  let _loadTimer = null;
+
+  // ── Auto-connect on start ──
+  window.addEventListener('load', function () {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      document.getElementById('vps-input').value = saved;
+      loadDashboard(saved);
+    }
+  });
+
+  // ── Connect button ──
+  function connect() {
+    const raw = (document.getElementById('vps-input').value || '').trim();
+    const errEl = document.getElementById('setup-error');
+
+    if (!raw) {
+      showError(errEl, '⚠️ VPS address ထည့်ပါ  (e.g. 150.95.84.241:8080)');
+      return;
+    }
+    errEl.style.display = 'none';
+
+    // Strip leading protocol if the user typed it.
+    const url = raw.replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+    localStorage.setItem(STORAGE_KEY, url);
+    loadDashboard(url);
+  }
+
+  function showError(el, msg) {
+    el.textContent = msg;
+    el.style.display = 'block';
+    el.style.animation = 'none';
+    el.offsetHeight; // reflow
+    el.style.animation = '';
+  }
+
+  // ── Load dashboard in iframe ──
+  function loadDashboard(url) {
+    _currentUrl = url;
+    const frame   = document.getElementById('dash-frame');
+    const setupEl = document.getElementById('setup');
+    const dashEl  = document.getElementById('dashboard');
+    const loadEl  = document.getElementById('loading-overlay');
+    const errEl2  = document.getElementById('error-overlay');
+
+    document.getElementById('loading-url-text').textContent = 'http://' + url;
+    document.getElementById('vps-label').textContent = url;
+
+    // Show dashboard screen, loading overlay.
+    setupEl.style.display = 'none';
+    dashEl.style.display  = 'flex';
+    loadEl.classList.remove('hidden');
+    loadEl.style.display = 'flex';
+    errEl2.style.display = 'none';
+
+    setDot('connecting');
+
+    // 30-second timeout: if no load event fires, show error.
+    clearTimeout(_loadTimer);
+    _loadTimer = setTimeout(function () {
+      loadEl.style.display = 'none';
+      errEl2.style.display = 'flex';
+      setDot('offline');
+    }, 30000);
+
+    frame.src = 'http://' + url;
+  }
+
+  // ── iframe loaded ──
+  function onFrameLoad() {
+    clearTimeout(_loadTimer);
+    const loadEl = document.getElementById('loading-overlay');
+    loadEl.classList.add('hidden');
+    setTimeout(function () { loadEl.style.display = 'none'; }, 350);
+    document.getElementById('error-overlay').style.display = 'none';
+    setDot('online');
+  }
+
+  // ── Refresh ──
+  function refreshFrame() {
+    const frame  = document.getElementById('dash-frame');
+    const loadEl = document.getElementById('loading-overlay');
+    const errEl2 = document.getElementById('error-overlay');
+
+    loadEl.classList.remove('hidden');
+    loadEl.style.display = 'flex';
+    errEl2.style.display = 'none';
+    setDot('connecting');
+
+    clearTimeout(_loadTimer);
+    _loadTimer = setTimeout(function () {
+      loadEl.style.display = 'none';
+      errEl2.style.display = 'flex';
+      setDot('offline');
+    }, 30000);
+
+    // Force reload by appending a cache-bust timestamp to the URL.
+    frame.src = 'http://' + _currentUrl + '?_t=' + Date.now();
+  }
+
+  function retryConnect() {
+    if (_currentUrl) loadDashboard(_currentUrl);
+  }
+
+  // ── Go back to setup screen ──
+  function showSetup() {
+    document.getElementById('setup').style.display    = 'flex';
+    document.getElementById('dashboard').style.display = 'none';
+    const saved = localStorage.getItem(STORAGE_KEY) || '';
+    document.getElementById('vps-input').value = saved;
+    clearTimeout(_loadTimer);
+  }
+
+  // ── Status dot helper ──
+  function setDot(state) {
+    const dot = document.getElementById('status-dot');
+    dot.className = 'status-dot';
+    if (state === 'online')      { dot.classList.add('online'); }
+    else if (state === 'offline') { dot.classList.add('offline'); }
+    // 'connecting' → yellow (default)
+  }
+
+  // ── Enter key on input ──
+  document.getElementById('vps-input')
+    .addEventListener('keydown', function (e) { if (e.key === 'Enter') connect(); });
+</script>
+</body>
+</html>

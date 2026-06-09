@@ -171,13 +171,22 @@ def execute_order(symbol, strategy, signal, *, equity, multiplier, api_mode,
         return pos_id
 
     # --- Real mode ---
+    # Insert the position record BEFORE placing exchange orders so that if the
+    # DB write fails, no funds move. The inverse (orders first, DB after) leaves
+    # live positions invisible to the bot if the DB write crashes.
     try:
         client = bc.get_client(api_mode)
         _set_leverage(client, symbol, sized["eff_lev"])
         close_side = "SELL" if side == "BUY" else "BUY"
 
+        pos_id = db.insert_position(position)
+    except Exception as e:  # noqa: BLE001
+        db.log_event("ORDER_ERROR", f"{symbol} {strategy} pre-order setup: {e}")
+        return None
+
+    try:
         entry_order = _market_entry(client, symbol, side, qty)
-        position["order_id"] = str(entry_order.get("orderId", ""))
+        db.update_position(pos_id, {"order_id": str(entry_order.get("orderId", ""))})
 
         _stop_market(client, symbol, close_side, sized["sl"])
 
@@ -195,12 +204,14 @@ def execute_order(symbol, strategy, signal, *, equity, multiplier, api_mode,
         else:
             _take_profit(client, symbol, close_side, sized["tp1"], close_all=True)
 
-        pos_id = db.insert_position(position)
-        db.log_event("REAL_OPEN", f"{symbol} {side} qty={qty} @ {entry}")
+        db.log_event("REAL_OPEN", f"{symbol} {side} qty={qty} @ {entry} pos_id={pos_id}")
         return pos_id
     except Exception as e:  # noqa: BLE001
-        db.log_event("ORDER_ERROR", f"{symbol} {strategy}: {e}")
-        return None
+        # Entry may or may not have filled — position is recorded so the user
+        # can reconcile manually against Binance. Log with pos_id for tracing.
+        db.log_event("ORDER_ERROR_PARTIAL",
+                     f"{symbol} {strategy} pos_id={pos_id}: {e} — check Binance dashboard")
+        return pos_id
 
 
 @with_retry(max_retries=3, base_delay=3)

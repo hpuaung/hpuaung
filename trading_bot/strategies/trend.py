@@ -55,13 +55,18 @@ def run(df_entry, df_confirm=None, df_trend=None, mtf=False):
     confirm_ok_bull = True
     confirm_ok_bear = True
     if mtf and df_confirm is not None and has_enough(df_confirm):
-        confirm_ok_bull = _ema_bull(df_confirm)
-        confirm_ok_bear = _ema_bear(df_confirm)
+        # Use ema21>ema50 (not the full 3-EMA stack) for higher TF frames.
+        # The full _ema_bull (ema21>ema50>ema200) on a 1d confirm requires a
+        # 200-day sustained uptrend, which silences swing trading during any
+        # correction or sideways phase. ema21>ema50 is a meaningful medium-term
+        # trend filter without demanding a multi-year bull market.
+        confirm_ok_bull = safe(df_confirm["ema21"]) > safe(df_confirm["ema50"])
+        confirm_ok_bear = safe(df_confirm["ema21"]) < safe(df_confirm["ema50"])
     trend_ok_bull = True
     trend_ok_bear = True
     if mtf and df_trend is not None and has_enough(df_trend):
-        trend_ok_bull = _ema_bull(df_trend)
-        trend_ok_bear = _ema_bear(df_trend)
+        trend_ok_bull = safe(df_trend["ema21"]) > safe(df_trend["ema50"])
+        trend_ok_bear = safe(df_trend["ema21"]) < safe(df_trend["ema50"])
 
     # NOTE: the strict "last 3 highs & lows ascending" check was dropped — it
     # contradicted the EMA21 pullback requirement (a pullback dips recent
