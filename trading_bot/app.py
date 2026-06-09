@@ -225,7 +225,6 @@ def _persist_api_fields():
 def tab_dashboard():
     scalp_mode = db.get_setting("scalping_mode", "paper")
     swing_mode = db.get_setting("swing_mode", "paper")
-    starting = db.get_float("starting_balance", 0.0) or 5000.0
     paper_bal = db.paper_balance()
 
     scalp_real = (scalp_mode == "real")
@@ -243,6 +242,18 @@ def tab_dashboard():
         real_bal = None
 
     primary_bal = real_bal if any_real and real_bal else paper_bal
+
+    # Use separate starting balances for real vs paper so drawdown is correct.
+    if any_real and real_bal:
+        _real_start = db.get_float("real_starting_balance", 0.0)
+        if not _real_start:
+            # First time in real mode — auto-set to current real balance (0% drawdown).
+            _real_start = real_bal
+            db.save_setting("real_starting_balance", f"{real_bal:.2f}")
+        starting = _real_start
+    else:
+        starting = db.get_float("starting_balance", 0.0) or 5000.0
+
     health = risk_guard.health_ratio(primary_bal, starting)
     color, zone = risk_guard.health_zone(health)
     pnl = risk_guard.today_pnl()
@@ -897,6 +908,20 @@ def tab_settings():
             db.clear_paper_trades()
             db.save_setting("starting_balance", f"{new_bal:.2f}")
             st.success(f"Paper account reset to ${new_bal:,.0f}, history cleared.")
+            st.rerun()
+
+        st.divider()
+        _cur_real_start = db.get_float("real_starting_balance", 0.0)
+        st.write(f"💰 Real account start capital: **${_cur_real_start:,.2f}**" if _cur_real_start else
+                 "💰 Real account start capital: **not set**")
+        st.caption("Used to calculate drawdown and Health % when running in REAL mode. "
+                   "Set this once to your actual Binance balance when you first go live.")
+        new_real_bal = st.number_input("Real starting capital ($)", min_value=1.0, max_value=1000000.0,
+                                       value=float(_cur_real_start or 63.99), step=1.0,
+                                       key="real_start_input")
+        if st.button("💰 Set Real Starting Capital"):
+            db.save_setting("real_starting_balance", f"{new_real_bal:.2f}")
+            st.success(f"Real starting balance set to ${new_real_bal:,.2f}. Health % reset.")
             st.rerun()
 
     with st.expander("📱 6. Telegram", expanded=False):
