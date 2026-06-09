@@ -1092,8 +1092,16 @@ def main():
         st.cache_data.clear()
         st.rerun()
     conn = "🟢 Binance Connected" if binance_connected() else "🔴 Binance Not Connected"
+    _sc_mode = db.get_setting("scalping_mode", "paper")
+    _sw_mode = db.get_setting("swing_mode", "paper")
+    if _sc_mode == "real" and _sw_mode == "real":
+        _mode_badge = "💰 REAL"
+    elif _sc_mode == "real" or _sw_mode == "real":
+        _mode_badge = "⚡💰 MIXED"
+    else:
+        _mode_badge = "🧪 PAPER"
     cols[1].caption(f"UTC {datetime.now(timezone.utc).strftime('%H:%M:%S')} | "
-                    f"{'🧪 PAPER' if db.get_bool('paper_trading_mode', True) else '💰 REAL'} | {conn}")
+                    f"{_mode_badge} | {conn}")
 
     t1, t2, t3, t4 = st.tabs(["📊 Dashboard", "⚡ Scalping", "📈 Swing", "⚙️ Settings"])
     with t1:
