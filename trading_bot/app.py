@@ -378,7 +378,11 @@ def tab_dashboard():
 
     # Section 7 — Performance Metrics
     st.subheader("📈 Performance Metrics")
-    _performance_metrics()
+    _trade_filter = st.radio("Show trades:", ["Real only", "Paper only", "All"],
+                             horizontal=True, index=0, key="rank_filter")
+    _pm_filter = (False if _trade_filter == "Real only"
+                  else True if _trade_filter == "Paper only" else None)
+    _performance_metrics(_pm_filter)
 
     # AI learning progress toward the adaptive thresholds.
     st.subheader("🧠 AI Learning Progress")
@@ -386,10 +390,6 @@ def tab_dashboard():
 
     # Section 8 — Pair Performance Ranking
     st.subheader("🏆 Pair Ranking")
-    _trade_filter = st.radio("Show trades:", ["Real only", "Paper only", "All"],
-                             horizontal=True, index=0, key="rank_filter")
-    _pm_filter = (False if _trade_filter == "Real only"
-                  else True if _trade_filter == "Paper only" else None)
     _pair_ranking(_pm_filter)
 
     # Section 9 — Best Trading Hours
@@ -433,8 +433,8 @@ def _learning_progress():
                "trades) before judging; switch to REAL only after consistent positive PnL.")
 
 
-def _performance_metrics():
-    trades = db.get_trades()
+def _performance_metrics(paper_mode=None):
+    trades = db.get_trades(paper_mode=paper_mode)
     total = len(trades)
     wins = [t for t in trades if (t.get("net_pnl") or 0) > 0]
     losses = [t for t in trades if (t.get("net_pnl") or 0) <= 0]
