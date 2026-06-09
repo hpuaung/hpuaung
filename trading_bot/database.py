@@ -714,6 +714,9 @@ DEFAULTS = {
     "scalping_win_filter": "1",
     "swing_win_filter": "1",
     "win_filter_min": "0.45",
+    # Per-engine trading mode: 'paper' (simulated on testnet) or 'real' (live).
+    "scalping_mode": "paper",
+    "swing_mode": "paper",
 
     # Runtime/internal flags
     "blackout_active": "0",

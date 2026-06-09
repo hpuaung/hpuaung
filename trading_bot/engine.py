@@ -149,9 +149,13 @@ def _apply_news_filter(symbol, strategy, signal):
 # ---------------------------------------------------------------------------
 # Per-pair processing
 # ---------------------------------------------------------------------------
-def process_pair(symbol, strategy, equity, multiplier, paper_mode, health):
-    api_mode = "real" if db.get_setting(f"{strategy}_api_mode") == "real" else "test"
+def _engine_mode(strategy):
+    """Per-engine trading mode: 'paper' (simulated on testnet data) or 'real'
+    (live orders). Lets Scalping and Swing run different modes at the same time."""
+    return "real" if db.get_setting(f"{strategy}_mode", "paper") == "real" else "paper"
 
+
+def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_mode):
     # Skip if we already hold a position for this symbol+strategy.
     for p in db.get_open_positions(strategy=strategy):
         if p["symbol"] == symbol:
@@ -358,8 +362,7 @@ def _run_cycle():
     # Determine the api mode for the equity read. Prefer 'real' only if a real
     # engine is configured AND live credentials exist; otherwise fall back to
     # 'test' so a missing live secret can't spam EQUITY_ERROR or shrink sizing.
-    real_engine = (db.get_setting("scalping_api_mode") == "real"
-                   or db.get_setting("swing_api_mode") == "real")
+    real_engine = (_engine_mode("scalping") == "real" or _engine_mode("swing") == "real")
     if real_engine and bc.has_credentials("real"):
         equity_mode = "real"
     elif bc.has_credentials("test"):
@@ -372,8 +375,6 @@ def _run_cycle():
         position_manager.monitor_all(tg)
         _update_snapshot(db.get_float("last_equity", 0.0), equity_mode, _selected_pairs())
         return
-
-    paper_mode = db.get_bool("paper_trading_mode", True)
 
     try:
         real_equity = bc.get_equity(equity_mode)
@@ -389,13 +390,13 @@ def _run_cycle():
     if db.get_float("starting_balance", 0.0) <= 0 and real_equity > 0:
         db.save_setting("starting_balance", f"{real_equity:.2f}")
 
-    # In paper mode the bot trades a SIMULATED wallet (= starting capital +
-    # realized paper PnL), so sizing + health reflect paper performance and the
-    # account compounds; the real testnet wallet is untouched. In real mode the
-    # live wallet balance is used.
-    equity = db.paper_balance() if paper_mode else real_equity
+    paper_eq = db.paper_balance()
+    any_real = (_engine_mode("scalping") == "real" or _engine_mode("swing") == "real")
+    # Health/drawdown guard uses the real wallet when any engine trades live,
+    # otherwise the simulated paper wallet.
+    primary_equity = real_equity if any_real else paper_eq
 
-    health = _enforce_health(equity)
+    health = _enforce_health(primary_equity)
     multiplier = risk_guard.health_multiplier(health)
 
     if multiplier > 0:
@@ -403,9 +404,13 @@ def _run_cycle():
         for strategy in ("scalping", "swing"):
             if not db.get_bool(f"{strategy}_bot_on", False):
                 continue
+            # Per-engine mode: paper -> testnet data + simulated; real -> live.
+            paper_mode = _engine_mode(strategy) == "paper"
+            api_mode = "test" if paper_mode else "real"
+            eng_equity = paper_eq if paper_mode else real_equity
             for symbol in pairs:
                 try:
-                    process_pair(symbol, strategy, equity, multiplier, paper_mode, health)
+                    process_pair(symbol, strategy, eng_equity, multiplier, paper_mode, health, api_mode)
                 except Exception as e:  # noqa: BLE001
                     db.log_event("PAIR_ERROR", f"{symbol} {strategy}: {e}")
 
@@ -415,7 +420,7 @@ def _run_cycle():
     _maybe_status()
 
     # Publish a snapshot to the DB so the UI never has to call Binance itself.
-    _update_snapshot(equity, equity_mode, _selected_pairs())
+    _update_snapshot(primary_equity, equity_mode, _selected_pairs())
 
 
 def _update_snapshot(equity, equity_mode, pairs):

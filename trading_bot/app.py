@@ -187,6 +187,11 @@ def live_price(symbol, api_mode=None):
 
 def _conn_badge(mode):
     """Persistent 🟢/🔴 connection status badge for an API mode ('test'/'live')."""
+    creds_mode = "test" if mode == "test" else "real"
+    if not bc.has_credentials(creds_mode):
+        st.info("⚪ No keys entered. (Paper mode does NOT need them — only add keys "
+                "to see your real wallet balance or to trade for real.)")
+        return
     ok = db.get_setting(f"conn_{mode}_ok", "")
     msg = db.get_setting(f"conn_{mode}_msg", "")
     if ok == "1":
@@ -194,7 +199,7 @@ def _conn_badge(mode):
     elif ok == "0":
         st.error(f"🔴 Not connected — {msg}")
     else:
-        st.info("⚪ Not tested yet — enter keys and press Test/Save")
+        st.info("⚪ Keys present — press Test/Save to verify")
 
 
 def binance_connected():
@@ -218,26 +223,18 @@ def _persist_api_fields():
 # TAB 1 — DASHBOARD
 # ===========================================================================
 def tab_dashboard():
-    api_mode = _global_api_mode()
-    paper_mode_on = db.get_bool("paper_trading_mode", True)
+    scalp_mode = db.get_setting("scalping_mode", "paper")
+    swing_mode = db.get_setting("swing_mode", "paper")
     starting = db.get_float("starting_balance", 0.0) or 5000.0
-    # In paper mode health/equity track the simulated paper wallet; in real mode
-    # they track the live wallet balance from the engine snapshot.
-    if paper_mode_on:
-        equity = db.paper_balance()
-    else:
-        equity, _err = live_equity(api_mode)
-    health = risk_guard.health_ratio(equity, starting)
+    paper_bal = db.paper_balance()
+    health = risk_guard.health_ratio(paper_bal, starting)
     color, zone = risk_guard.health_zone(health)
     pnl = risk_guard.today_pnl()
-    pnl_pct = (pnl / equity * 100.0) if equity else 0.0
-
-    # Section 1 — Account Health
-    st.subheader("📊 Account Health")
+    pnl_pct = (pnl / paper_bal * 100.0) if paper_bal else 0.0
 
     def _fmt_bal(v):
         if v in ("", None):
-            return "— (no keys)"
+            return "— (no key)"
         if v == "ERR":
             return "🔴 error"
         try:
@@ -247,51 +244,37 @@ def tab_dashboard():
 
     test_bal = db.get_setting("last_equity_test", "")
     live_bal = db.get_setting("last_equity_live", "")
-    paper = db.get_bool("paper_trading_mode", True)
 
+    # Section 1 — Account Health
+    st.subheader("📊 Account Health")
     b1, b2 = st.columns(2)
-    if paper:
-        # The simulated paper wallet that actually moves with wins/losses.
-        paper_bal = db.paper_balance()
-        realized = paper_bal - starting
-        b1.metric("📒 Paper Balance", f"${paper_bal:,.2f}", f"{realized:+,.2f} all-time")
-        b2.metric("Today PnL", f"${pnl:,.2f}", f"{pnl_pct:+.2f}%")
-        # Also show the real wallet balances for reference.
-        t1, t2 = st.columns(2)
-        t1.metric("🧪 Test Balance", _fmt_bal(test_bal))
-        t2.metric("💰 Real Balance", _fmt_bal(live_bal))
-        st.caption(f"📒 Paper wallet = ${starting:,.0f} start + realized PnL (moves with each "
-                   f"closed trade). Test/Real = your actual Binance wallets.")
+    b1.metric("📒 Paper Balance", f"${paper_bal:,.2f}", f"{paper_bal - starting:+,.2f} all-time")
+    b2.metric("Today PnL", f"${pnl:,.2f}", f"{pnl_pct:+.2f}%")
+
+    # Real wallet balances are shown ONLY when the matching API keys exist.
+    wallet = []
+    if bc.has_credentials("test"):
+        wallet.append(("🧪 Test Balance", _fmt_bal(test_bal)))
+    if bc.has_credentials("real"):
+        wallet.append(("💰 Real Balance", _fmt_bal(live_bal)))
+    if wallet:
+        wc = st.columns(len(wallet))
+        for i, (lab, val) in enumerate(wallet):
+            wc[i].metric(lab, val)
     else:
-        b1.metric("💰 Real Balance", _fmt_bal(live_bal))
-        b2.metric("Today PnL", f"${pnl:,.2f}", f"{pnl_pct:+.2f}%")
-        st.caption("🧪 Test Balance (testnet): " + _fmt_bal(test_bal))
+        st.caption("ℹ️ Add Binance API keys (Settings) to see your Test/Real wallet balances. "
+                   "Paper trading needs no keys.")
 
     dd = max(0.0, 100.0 - health)
     emoji = {"green": "🟢", "yellow": "🟡", "orange": "🟠", "red": "🔴"}[color]
     st.progress(min(1.0, max(0.0, health / 100.0)),
                 text=f"{emoji} Health {health:.0f}% — {zone}  |  Drawdown {dd:.1f}%")
-    if paper and not test_bal:
-        st.caption("Add Binance Testnet API keys in ⚙️ Settings to fetch live prices.")
 
-    # Section 2 — API Mode Status
-    st.subheader("🔀 API Mode")
-    paper = db.get_bool("paper_trading_mode", True)
-    cols = st.columns([2, 1])
-    cols[0].info(f"Current: {'🧪 PAPER / TEST' if paper else '💰 REAL API'}")
-    if cols[1].button("Switch Mode"):
-        st.session_state["confirm_real"] = not paper
-    if st.session_state.get("confirm_real") and paper:
-        st.warning("⚠️ Switch to REAL API? Real funds will be used.")
-        if st.button("✅ Confirm REAL"):
-            db.save_setting("paper_trading_mode", "0")
-            st.session_state["confirm_real"] = False
-            st.rerun()
-    elif not paper and st.session_state.get("confirm_real") is False:
-        pass
-    if not paper and st.button("↩ Back to PAPER"):
-        db.save_setting("paper_trading_mode", "1")
-        st.rerun()
+    # Section 2 — Per-engine trade mode (independent Paper/Real)
+    st.subheader("🔁 Trade Mode (per engine)")
+    st.info(f"Current:  ⚡ Scalp = **{scalp_mode.upper()}**  |  📈 Swing = **{swing_mode.upper()}**")
+    st.caption("Each engine runs its own mode — e.g. Swing on Paper while Scalp is Real. "
+               "Change it in the ⚡ Scalping / 📈 Swing tab.")
 
     # Section 3 — Pair Selection (checkbox list + explicit Save)
     st.subheader("🎯 Pair Selection (Max 10)")
@@ -478,9 +461,16 @@ def _trades_csv():
 def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=False):
     st.subheader(f"{title} — Mode & Control")
 
-    # Section 1 — Mode & Control
-    select("API Mode", f"{strategy}_api_mode", ["test", "real"],
-           db.get_setting(f"{strategy}_api_mode", "test"))
+    # Section 1 — Mode & Control (per-engine paper/real — independent of the other)
+    mode = select("🔁 Mode", f"{strategy}_mode", ["paper", "real"],
+                  db.get_setting(f"{strategy}_mode", "paper"))
+    if mode == "real":
+        if not bc.has_credentials("real"):
+            st.error("⚠️ REAL mode needs Live API keys (Settings → API). Trades will be blocked.")
+        else:
+            st.warning("💰 REAL mode — this engine trades with actual funds.")
+    else:
+        st.caption("🧪 PAPER — simulated on testnet data (no real money).")
     cols = st.columns(3)
     if cols[0].button("▶ START", key=f"{strategy}_start"):
         db.save_setting(f"{strategy}_bot_on", "1")
@@ -667,6 +657,12 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
     st.subheader("📅 Today Stats")
     _today_stats(strategy)
 
+    # Save & notify — settings already auto-save on change; this confirms + pings Telegram.
+    st.divider()
+    if st.button(f"💾 Save {strategy.title()} Settings", key=f"{strategy}_savenotify", type="primary"):
+        tg.send_message(f"⚙️ <b>{strategy.title()} settings saved</b>\n" + tg.build_status_text())
+        st.success("Saved ✅ (settings apply live to the running bot; Telegram notified)")
+
 
 def _market_context_display(strategy):
     market = _snapshot_market()
@@ -814,8 +810,14 @@ def tab_settings():
         st.caption(f"Today: {news.gnews_requests_today()}/100 requests | Cache 30min")
         text("HuggingFace Token", "hf_token", password=True, show_saved=True)
         st.caption("Model: ProsusAI/finbert via API (cloud call, no local model)")
+        hf_ok = bool(db.get_setting("hf_token"))
         st.caption(f"HF this month: {news.hf_requests_month()}/30000 | "
-                   f"Status: {'🟢' if db.get_setting('hf_token') else '🔴'}")
+                   f"Status: {'🟢 connected' if hf_ok else '🔴 no token'}")
+        if st.button("💾 Save News/AI Keys"):
+            tg.send_message("📰 <b>News/AI keys saved</b> "
+                            f"(GNews {'✅' if db.get_setting('gnews_api') else '—'}, "
+                            f"HF {'✅' if hf_ok else '—'})")
+            st.success("Saved ✅ (Telegram notified)")
 
     with st.expander("🤖 3. LightGBM Model", expanded=False):
         select("Retrain Schedule", "lgbm_retrain_schedule", ["daily", "weekly", "manual"],

@@ -146,7 +146,8 @@ def _close_partial(pos, tp_level, exit_price, close_pct, api_mode, notifier=None
 def process_position(pos, notifier=None):
     """Evaluate a single open position against the live price."""
     strat = pos["strategy"]
-    api_mode = _api_mode(strat)
+    # A position keeps the data source it was opened with (paper -> testnet).
+    api_mode = "test" if pos.get("paper_mode") else "real"
     side = pos["side"]
     d = _dir(side)
 
