@@ -244,9 +244,12 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
 
     # Win predictor: once a model has been trained on past wins/losses, only take
     # setups it predicts are likely to WIN (learned from the bot's own history).
+    # Requires >= 50 training samples to activate — prevents a model trained on
+    # too few trades from blocking all entries with garbage probabilities.
     from models.train import get_win_model
     wm = get_win_model()
-    if wm is not None and db.get_bool(f"{strategy}_win_filter", True):
+    _win_samples = db.get_int("win_model_samples", 0)
+    if wm is not None and _win_samples >= 50 and db.get_bool(f"{strategy}_win_filter", True):
         try:
             win_prob = float(wm.predict_proba([entry_features])[0][1])
             min_wp = db.get_float("win_filter_min", 0.45)
