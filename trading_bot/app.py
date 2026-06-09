@@ -386,15 +386,19 @@ def tab_dashboard():
 
     # Section 8 — Pair Performance Ranking
     st.subheader("🏆 Pair Ranking")
-    _pair_ranking()
+    _trade_filter = st.radio("Show trades:", ["Real only", "Paper only", "All"],
+                             horizontal=True, index=0, key="rank_filter")
+    _pm_filter = (False if _trade_filter == "Real only"
+                  else True if _trade_filter == "Paper only" else None)
+    _pair_ranking(_pm_filter)
 
     # Section 9 — Best Trading Hours
     st.subheader("🕐 Best Trading Hours (UTC)")
-    _best_hours()
+    _best_hours(_pm_filter)
 
     # Section 10 — Export
     st.subheader("📥 Export")
-    csv_bytes = _trades_csv()
+    csv_bytes = _trades_csv(_pm_filter)
     st.download_button("📥 Download Trade Report CSV", csv_bytes,
                        file_name="trade_report.csv", mime="text/csv")
 
@@ -452,8 +456,8 @@ def _performance_metrics():
     f.metric("Best / Worst", f"${best:,.2f} / ${worst:,.2f}")
 
 
-def _pair_ranking():
-    trades = db.get_trades()
+def _pair_ranking(paper_mode=None):
+    trades = db.get_trades(paper_mode=paper_mode)
     by_pair = {}
     for t in trades:
         p = t["pair"]
@@ -473,8 +477,8 @@ def _pair_ranking():
         st.caption("No closed trades yet.")
 
 
-def _best_hours():
-    trades = db.get_trades()
+def _best_hours(paper_mode=None):
+    trades = db.get_trades(paper_mode=paper_mode)
     hours = {}
     for t in trades:
         ts = t.get("exit_timestamp") or t.get("timestamp") or ""
@@ -493,8 +497,8 @@ def _best_hours():
         st.caption("Not enough data.")
 
 
-def _trades_csv():
-    trades = db.get_trades()
+def _trades_csv(paper_mode=None):
+    trades = db.get_trades(paper_mode=paper_mode)
     buf = io.StringIO()
     if trades:
         writer = csv.DictWriter(buf, fieldnames=list(trades[0].keys()))
