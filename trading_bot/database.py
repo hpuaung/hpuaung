@@ -526,7 +526,12 @@ def get_recent_events(limit=50):
     rows = conn.execute(
         "SELECT * FROM events ORDER BY id DESC LIMIT ?", (limit,)
     ).fetchall()
-    return [dict(r) for r in rows]
+    result = []
+    for r in rows:
+        d = dict(r)
+        d.setdefault("type", d.get("kind", ""))  # alias for callers expecting 'type'
+        result.append(d)
+    return result
 
 
 # ---------------------------------------------------------------------------

@@ -41,6 +41,15 @@ def get_win_model():
     global _win_model
     with _win_lock:
         if _win_model is None and os.path.exists(WIN_MODEL_PATH):
+            # Discard models trained on too few samples — they give garbage
+            # predictions and block all entries before enough data exists.
+            if db.get_int("win_model_samples", 0) < 50:
+                try:
+                    os.remove(WIN_MODEL_PATH)
+                except OSError:
+                    pass
+                db.log_event("WINMODEL_STALE", "win_model.pkl removed — fewer than 50 training samples")
+                return None
             try:
                 import joblib
                 _win_model = joblib.load(WIN_MODEL_PATH)
