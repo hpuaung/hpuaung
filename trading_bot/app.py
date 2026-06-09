@@ -304,9 +304,9 @@ def tab_dashboard():
     model = lgbm.get_model()
     sc = st.columns(2)
     sc[0].write(f"⚡ Scalping: {'🟢 Running' if db.get_bool('scalping_bot_on') else '🟡 Stopped'} "
-                f"[{db.get_setting('scalping_api_mode','test').upper()}]")
+                f"[{db.get_setting('scalping_mode','paper').upper()}]")
     sc[0].write(f"📈 Swing: {'🟢 Running' if db.get_bool('swing_bot_on') else '🟡 Stopped'} "
-                f"[{db.get_setting('swing_api_mode','test').upper()}]")
+                f"[{db.get_setting('swing_mode','paper').upper()}]")
     sc[1].write(f"🤖 LightGBM: {'🟢 Active' if model else '🔴 Not Trained'}")
     sc[1].write(f"📰 Sentiment: {'🟢 Connected' if db.get_setting('hf_token') else '🔴 Error'}")
 
