@@ -1,0 +1,22 @@
+# Secrets & environment
+.env
+*.pem
+
+# Database & runtime state
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Logs & process files
+*.log
+*.pid
+output.log
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/

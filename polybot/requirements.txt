@@ -1,0 +1,5 @@
+py-clob-client
+flask
+requests
+python-dotenv
+bcrypt
