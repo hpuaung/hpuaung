@@ -1514,7 +1514,12 @@ def execute_sell_order(pos: dict, reason: str) -> bool:
     Returns True on success.
     """
     token_id      = pos.get("token_id", "")
-    current_price = get_current_price(token_id) or pos["current_price"]
+    raw_price     = get_current_price(token_id)
+    if raw_price is not None:
+        current_price = (round(1.0 - raw_price, 4)
+                         if pos.get("side") == "NO" else raw_price)
+    else:
+        current_price = pos["current_price"]
     paper         = bool(int(get_setting("paper_mode")))
 
     if paper or not CLOB_AVAILABLE or not _clob_client:
@@ -1600,9 +1605,12 @@ def monitor_positions():
     for pos in positions:
         token_id = pos.get("token_id", "")
 
-        # Update current price
-        current_price = get_current_price(token_id)
-        if current_price:
+        # Update current price (CLOB returns the YES-token price; convert to the
+        # NO-side effective price so entry/target/PnL stay on the same basis).
+        raw_price = get_current_price(token_id)
+        if raw_price is not None:
+            current_price = (round(1.0 - raw_price, 4)
+                             if pos.get("side") == "NO" else raw_price)
             update_position_price(pos["id"], current_price)
             pos["current_price"] = current_price
         else:
@@ -1844,9 +1852,15 @@ def trading_loop():
                     passed, analysis = run_all_layers(market)
 
                     if passed:
+                        # Kelly needs the WIN probability (from L3) and the
+                        # effective entry price for the chosen side (NO = 1-price).
+                        direction = market.get("_direction", "YES")
+                        eff_price = (round(1.0 - market["price"], 4)
+                                     if direction == "NO" else market["price"])
                         size = kelly_position_size(
-                            market_price   = market["price"],
-                            estimated_prob = analysis["sentiment_score"],
+                            market_price   = eff_price,
+                            estimated_prob = market.get("_estimated_prob",
+                                                        analysis["sentiment_score"]),
                             capital        = capital,
                             rank           = rank,
                         )

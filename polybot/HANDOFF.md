@@ -26,9 +26,28 @@ Flask dashboard with admin login. Paper + real (CLOB) modes. See `README.md`.
 - GNews 100 req/day quota exhausts quickly.
 - No swap configured (0 B).
 
+## Code audit — fixed vs remaining
+**Fixed (P0, paper-mode correctness):**
+- Kelly sizing now uses the L3 win probability (`_estimated_prob`) and the
+  side-effective entry price, not the raw sentiment score / YES price
+  (`trading_loop`).
+- NO-side positions: `monitor_positions` and `execute_sell_order` now convert
+  the CLOB YES-token price to the NO effective price (`1 - price`) so
+  entry/target/PnL stay on one basis.
+
+**Still open:**
+- 🔴 **Live CLOB orders not functional.** `OrderArgs(side=...)` is passed
+  "YES"/"NO" but the CLOB expects `BUY`/`SELL`; buying NO needs the NO token
+  (`clobTokenIds[1]`), which the scanner never stores. Must fix before real mode.
+- P1: Gamma API returns `outcomePrices` / `clobTokenIds` as JSON *strings*
+  sometimes — `isinstance(..., list)` fails and token_id can be wrong
+  (`scan_markets`).
+- P2: exit E2 fetches news + HuggingFace for every position every 10 min —
+  burns the limited GNews/HF quota.
+
 ## Pending / next ideas
-- **Live trading entry** — currently paper mode only; verify wallet + funder
-  address + USDC before trusting real mode.
+- **Live trading entry** — see the live-CLOB bug above; also verify wallet +
+  funder address + USDC before trusting real mode.
 - SSL / HTTPS for the dashboard.
 - Add swap space on the VPS.
 - Get `~/polybot` on the VPS onto git (currently the only synced copy is here).
