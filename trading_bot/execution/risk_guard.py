@@ -89,7 +89,9 @@ def apply_correlation_guard(side, strategy):
     if not db.get_bool(f"{strategy}_corr_filter", False):
         return True, ""
     max_corr = db.get_int(f"{strategy}_max_corr_trades", 2)
-    same_dir = db.count_open_positions(side=side)
+    # Count only positions belonging to this strategy so that scalping and
+    # swing engines do not block each other's entries.
+    same_dir = db.count_open_positions(side=side, strategy=strategy)
     if same_dir >= max_corr:
         return False, f"{same_dir} open {side} trades >= max {max_corr}"
     return True, ""

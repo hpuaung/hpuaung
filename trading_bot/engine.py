@@ -198,8 +198,12 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
         return
 
     # Guards (in order). health guard returns (ok, reason, multiplier).
+    # Use real_starting_balance when not paper mode so drawdown is measured
+    # against the live account's actual starting capital, not the paper one.
+    _start_bal = (db.get_float("real_starting_balance", equity) or equity
+                  if not paper_mode else db.get_float("starting_balance", equity) or equity)
     guards = [
-        risk_guard.apply_health_guard(equity, db.get_float("starting_balance", equity), strategy)[:2],
+        risk_guard.apply_health_guard(equity, _start_bal, strategy)[:2],
         risk_guard.apply_daily_loss_guard(equity),
         risk_guard.apply_blackout_guard(),
         risk_guard.apply_correlation_guard(signal["signal"], strategy),

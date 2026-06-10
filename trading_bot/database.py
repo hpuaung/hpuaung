@@ -169,9 +169,16 @@ def init_db():
                 pair      TEXT,
                 features  TEXT,
                 won       INTEGER,
-                net_pnl   REAL
+                net_pnl   REAL,
+                paper_mode INTEGER DEFAULT 1
             )
         """)
+        # Migration: add paper_mode column if upgrading from older schema.
+        try:
+            c.execute("ALTER TABLE learning ADD COLUMN paper_mode INTEGER DEFAULT 1")
+            conn.commit()
+        except Exception:
+            pass
 
         # Migration: store the entry feature vector on the open position so it
         # can be paired with the outcome when the trade closes. Check the column
@@ -188,13 +195,14 @@ def init_db():
 # ---------------------------------------------------------------------------
 # Self-learning (entry features + win/loss outcome)
 # ---------------------------------------------------------------------------
-def add_learning(strategy, pair, features_json, won, net_pnl):
+def add_learning(strategy, pair, features_json, won, net_pnl, paper_mode=True):
     conn = get_conn()
     with _db_lock:
         conn.execute(
-            "INSERT INTO learning(timestamp, strategy, pair, features, won, net_pnl) "
-            "VALUES (?,?,?,?,?,?)",
-            (utcnow_str(), strategy, pair, features_json, 1 if won else 0, net_pnl),
+            "INSERT INTO learning(timestamp, strategy, pair, features, won, net_pnl, paper_mode) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (utcnow_str(), strategy, pair, features_json, 1 if won else 0, net_pnl,
+             1 if paper_mode else 0),
         )
         conn.commit()
 
@@ -205,10 +213,14 @@ def learning_count():
 
 
 def learning_dataset():
-    """Return (list_of_feature_lists, list_of_won) from the learning table."""
+    """Return (list_of_feature_lists, list_of_won) from the learning table.
+    Only real trades (paper_mode=0) are used so the model learns from live
+    market conditions rather than simulated fills."""
     import json as _json
     conn = get_conn()
-    rows = conn.execute("SELECT features, won FROM learning WHERE features IS NOT NULL").fetchall()
+    rows = conn.execute(
+        "SELECT features, won FROM learning WHERE features IS NOT NULL AND paper_mode=0"
+    ).fetchall()
     X, y = [], []
     for r in rows:
         try:

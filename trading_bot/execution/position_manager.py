@@ -99,7 +99,8 @@ def _record_close(pos, qty, exit_price, reason, notifier=None):
     feats = pos.get("entry_features")
     if feats:
         try:
-            db.add_learning(pos["strategy"], pos["symbol"], feats, net > 0, net)
+            db.add_learning(pos["strategy"], pos["symbol"], feats, net > 0, net,
+                            paper_mode=bool(pos.get("paper_mode", 1)))
             _maybe_train_win_model()
         except Exception:  # noqa: BLE001
             pass
