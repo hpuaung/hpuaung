@@ -12,13 +12,27 @@ the exchange (placed at entry); when this monitor decides to close, it cancels
 the symbol's remaining orders first to avoid duplicate fills.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import database as db
 from utils import binance_client as bc
 from execution import orders, risk_guard
 
 TAKER_FEE = 0.0004
+
+# Entry-timeframe -> minutes, used to size the post-SL re-entry cooldown.
+_TF_MINUTES = {"1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30, "1h": 60,
+               "2h": 120, "4h": 240, "6h": 360, "1d": 1440, "3d": 4320, "1w": 10080}
+
+
+def _set_sl_cooldown(pos):
+    """After a stop loss, block re-entry on this symbol+strategy for roughly one
+    entry candle so the unchanged signal does not immediately re-fire."""
+    tf = pos.get("timeframe", "5m")
+    mins = max(_TF_MINUTES.get(tf, 15), 15)  # 15-minute floor for fast scalps
+    until = datetime.now(timezone.utc) + timedelta(minutes=mins)
+    db.save_setting(f"cooldown_{pos['strategy']}_{pos['symbol']}",
+                    until.strftime("%Y-%m-%d %H:%M:%S"))
 
 
 def _maybe_train_win_model():
@@ -95,6 +109,13 @@ def _record_close(pos, qty, exit_price, reason, notifier=None):
     }
     db.insert_trade(trade)
     risk_guard.update_streak(net)
+    # Start a re-entry cooldown after a stop loss to stop the same losing signal
+    # from re-firing on the same (unchanged) entry candle.
+    if reason == "SL":
+        try:
+            _set_sl_cooldown(pos)
+        except Exception:  # noqa: BLE001
+            pass
     # Self-learning: pair the entry features with the win/loss outcome.
     feats = pos.get("entry_features")
     if feats:
@@ -213,11 +234,13 @@ def process_position(pos, notifier=None):
         else:
             trail_pct = db.get_float(f"{strat}_trail_pct", 1.5)
         cur_trail = pos.get("trail_sl_price") or 0.0
+        # Arm the trail only after the trade is up by 2x the trail distance, then
+        # trail 1x behind. This locks in ~1x trail_pct of REAL profit instead of
+        # closing winners at break-even (the old 1x trigger trailed 1x behind, so
+        # the stop sat at entry and tiny wobbles closed winners for ~$0).
+        arm_pct = trail_pct * 2.0
         if d > 0:
-            # Only start trailing once the trade is in profit by trail_pct, so a
-            # fresh position is not whipsawed out for a tiny loss right after
-            # entry. Until then the fixed SL protects the downside.
-            profit_trigger = entry * (1 + trail_pct / 100.0)
+            profit_trigger = entry * (1 + arm_pct / 100.0)
             if price >= profit_trigger:
                 new_trail = price * (1 - trail_pct / 100.0)
                 if new_trail > cur_trail:
@@ -227,7 +250,7 @@ def process_position(pos, notifier=None):
                 _close_full(pos, cur_trail, "Trail", api_mode, notifier)
                 return
         else:
-            profit_trigger = entry * (1 - trail_pct / 100.0)
+            profit_trigger = entry * (1 - arm_pct / 100.0)
             if price <= profit_trigger:
                 new_trail = price * (1 + trail_pct / 100.0)
                 if cur_trail == 0 or new_trail < cur_trail:

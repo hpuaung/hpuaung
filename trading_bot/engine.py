@@ -161,6 +161,20 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
         if p["symbol"] == symbol:
             return
 
+    # Post-SL cooldown: after a stop loss the entry candle's signal is unchanged,
+    # so re-entering immediately just repeats the same losing trade (this caused
+    # the same SOL swing SELL to fire 5x in a row). Block re-entry on this
+    # symbol+strategy until the cooldown (one entry-candle long) expires.
+    if db.get_bool("sl_cooldown_on", True):
+        cd = db.get_setting(f"cooldown_{strategy}_{symbol}", "")
+        if cd:
+            try:
+                until = datetime.strptime(cd, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                if datetime.now(timezone.utc) < until:
+                    return
+            except Exception:  # noqa: BLE001
+                pass
+
     try:
         df_entry, df_confirm, df_trend = _gather_indicator_frames(symbol, strategy, api_mode)
     except Exception as e:  # noqa: BLE001
