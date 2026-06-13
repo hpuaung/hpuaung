@@ -246,14 +246,53 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
             signal["sl"] = entry * (1 + sl_pct / 100.0)
         signal["tp1"] = signal["tp2"] = signal["tp3"] = tp
 
-    # Adaptive win-rate filter (the bot learns from its own SQLite history):
-    # once there is enough data, avoid pair/strategy contexts that have been
-    # losing. With little history it stays out of the way so trading can begin.
-    wr_pair, n_pair = db.winrate(strategy, symbol)
+    # -----------------------------------------------------------------------
+    # Adaptive self-learning entry filters
+    # The bot learns from its own closed-trade history (real trades only).
+    # Each filter only activates once there are enough trades in that context
+    # to be statistically meaningful — before then it stays out of the way.
+    # -----------------------------------------------------------------------
+
+    # 1. Pair win rate (all directions): if this pair has been a chronic loser
+    #    across 15+ real trades, skip until the pattern improves.
+    wr_pair, n_pair = db.winrate(strategy, symbol, paper_mode=0)
     if n_pair >= 15 and wr_pair is not None and wr_pair < 40.0:
-        db.log_event("WINRATE_SKIP", f"{symbol} {strategy} winrate={wr_pair:.0f}% over {n_pair} trades")
+        db.log_event("WINRATE_SKIP", f"{symbol} {strategy} pair_wr={wr_pair:.0f}% over {n_pair} trades")
         db.log_signal(symbol, triggered or strategy, lgbm_score, news_score, "LOWWR_SKIP")
         return
+
+    # 2. Direction-specific win rate: if e.g. SELL on SOLUSDT has lost 10/10
+    #    times, stop entering that direction on this pair until history improves.
+    if db.get_bool(f"{strategy}_dir_filter", True):
+        wr_dir, n_dir = db.winrate(strategy, symbol,
+                                   side=signal["signal"], paper_mode=0)
+        if n_dir >= 10 and wr_dir is not None and wr_dir < 35.0:
+            db.log_event("DIRWR_SKIP",
+                         f"{symbol} {strategy} {signal['signal']} dir_wr={wr_dir:.0f}% over {n_dir} trades")
+            db.log_signal(symbol, triggered or strategy, lgbm_score, news_score, "DIRWR_SKIP")
+            return
+
+    # 3. Hour-of-day win rate: if this UTC hour has historically lost across
+    #    10+ real trades for this strategy, wait for a better hour.
+    if db.get_bool(f"{strategy}_hour_filter", True):
+        cur_hour = datetime.now(timezone.utc).hour
+        wr_hour, n_hour = db.winrate_hour(cur_hour, strategy=strategy)
+        if n_hour >= 10 and wr_hour is not None and wr_hour < 35.0:
+            db.log_event("HOURWR_SKIP",
+                         f"{symbol} {strategy} UTC_hour={cur_hour} hour_wr={wr_hour:.0f}% over {n_hour} trades")
+            db.log_signal(symbol, triggered or strategy, lgbm_score, news_score, "HOURWR_SKIP")
+            return
+
+    # 4. Session × pair win rate: e.g. ETHUSDT is consistently losing during
+    #    the Asian session — skip that combination specifically.
+    if db.get_bool(f"{strategy}_session_pair_filter", True):
+        cur_session = _current_session()
+        wr_sess, n_sess = db.winrate_session_pair(cur_session, symbol, strategy=strategy)
+        if n_sess >= 8 and wr_sess is not None and wr_sess < 35.0:
+            db.log_event("SESSWR_SKIP",
+                         f"{symbol} {strategy} session={cur_session} sess_wr={wr_sess:.0f}% over {n_sess} trades")
+            db.log_signal(symbol, triggered or strategy, lgbm_score, news_score, "SESSWR_SKIP")
+            return
 
     # Self-learning: capture the market features of THIS entry so the outcome
     # can be learned from when the trade closes.

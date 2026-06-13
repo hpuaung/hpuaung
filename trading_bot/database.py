@@ -467,10 +467,11 @@ def paper_balance():
     return starting + realized
 
 
-def winrate(strategy=None, pair=None):
+def winrate(strategy=None, pair=None, side=None, paper_mode=None):
     """
     Historical win rate (%) and trade count for a context, read from the trades
     table — the bot's own learning memory. Returns (win_rate_or_None, n).
+    paper_mode=0 for real only, =1 for paper only, None for all.
     """
     conn = get_conn()
     q = "SELECT net_pnl FROM trades WHERE 1=1"
@@ -481,6 +482,51 @@ def winrate(strategy=None, pair=None):
     if pair:
         q += " AND pair=?"
         args.append(pair)
+    if side:
+        q += " AND side=?"
+        args.append(side)
+    if paper_mode is not None:
+        q += " AND paper_mode=?"
+        args.append(paper_mode)
+    rows = conn.execute(q, args).fetchall()
+    n = len(rows)
+    if n == 0:
+        return None, 0
+    wins = sum(1 for r in rows if (r["net_pnl"] or 0) > 0)
+    return wins / n * 100.0, n
+
+
+def winrate_hour(hour, strategy=None, paper_mode=0):
+    """Win rate (%, n) for a specific UTC hour (0-23). Real trades only by default."""
+    conn = get_conn()
+    q = ("SELECT net_pnl FROM trades "
+         "WHERE CAST(substr(COALESCE(exit_timestamp,timestamp),12,2) AS INTEGER)=?")
+    args = [hour]
+    if strategy:
+        q += " AND strategy=?"
+        args.append(strategy)
+    if paper_mode is not None:
+        q += " AND paper_mode=?"
+        args.append(paper_mode)
+    rows = conn.execute(q, args).fetchall()
+    n = len(rows)
+    if n == 0:
+        return None, 0
+    wins = sum(1 for r in rows if (r["net_pnl"] or 0) > 0)
+    return wins / n * 100.0, n
+
+
+def winrate_session_pair(session, pair, strategy=None, paper_mode=0):
+    """Win rate (%, n) for a session × pair combo. Real trades only by default."""
+    conn = get_conn()
+    q = "SELECT net_pnl FROM trades WHERE session=? AND pair=?"
+    args = [session, pair]
+    if strategy:
+        q += " AND strategy=?"
+        args.append(strategy)
+    if paper_mode is not None:
+        q += " AND paper_mode=?"
+        args.append(paper_mode)
     rows = conn.execute(q, args).fetchall()
     n = len(rows)
     if n == 0:
@@ -731,6 +777,13 @@ DEFAULTS = {
     "scalping_win_filter": "1",
     "swing_win_filter": "1",
     "win_filter_min": "0.45",
+    # Adaptive entry pattern filters (self-learning from own trade history)
+    "scalping_dir_filter": "1",
+    "swing_dir_filter": "1",
+    "scalping_hour_filter": "1",
+    "swing_hour_filter": "1",
+    "scalping_session_pair_filter": "1",
+    "swing_session_pair_filter": "1",
     # Per-engine trading mode: 'paper' (simulated on testnet) or 'real' (live).
     "scalping_mode": "paper",
     "swing_mode": "paper",
