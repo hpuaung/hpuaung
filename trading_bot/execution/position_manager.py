@@ -193,10 +193,17 @@ def process_position(pos, notifier=None):
                            api_mode, notifier)
             updates = {"tp1_closed": 1}
             if auto_be:
-                updates["sl_price"] = entry
+                # Lock part of the TP1 move as profit on the runner instead of a
+                # pure break-even stop. With pure BE, any retrace closed the
+                # remaining 50% at $0, so a winner that only tagged TP1 booked
+                # less than a full-SL loss (inverted risk:reward). Locking 30%
+                # of the TP1 distance keeps the runner net-positive.
+                lock_frac = db.get_float(f"{strat}_be_lock_frac", 0.30)
+                be_price = entry + (float(pos["tp1"]) - entry) * lock_frac
+                updates["sl_price"] = be_price
             db.update_position(pos["id"], updates)
             pos["tp1_closed"] = 1
-            pos["sl_price"] = entry if auto_be else pos["sl_price"]
+            pos["sl_price"] = updates.get("sl_price", pos["sl_price"])
 
         # TP2
         if not pos["tp2_closed"] and (
