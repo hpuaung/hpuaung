@@ -238,12 +238,20 @@ Respond ONLY with this JSON (no markdown):
 }}"""
 
         msg = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=400,
+            model="claude-haiku-4-5",
+            max_tokens=1024,
             messages=[{"role": "user", "content": prompt}]
         )
 
+        # Claude may wrap JSON in prose or ```json fences — extract the object.
         raw = msg.content[0].text.strip()
+        if "```" in raw:
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+            raw = raw.strip()
+        elif "{" in raw and "}" in raw:
+            raw = raw[raw.index("{"):raw.rindex("}") + 1]
         result = json.loads(raw)
 
         # Build report
@@ -280,7 +288,7 @@ Respond ONLY with this JSON (no markdown):
         return "\n".join(lines), actions
 
     except Exception as e:
-        db.log_event("AI_MONITOR_ERROR", str(e))
+        db.log_event("AI_MONITOR_ERROR", f"{type(e).__name__}: {str(e)[:300]}")
         return None, []
 
 
