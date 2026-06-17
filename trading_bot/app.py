@@ -871,6 +871,32 @@ def tab_settings():
                             f"HF {'✅' if hf_ok else '—'})")
             st.success("Saved ✅ (Telegram notified)")
 
+        st.markdown("---")
+        st.markdown("**🤖 Claude AI Monitor** (4-hour auto analysis)")
+        _claude_key_saved = db.get_setting("claude_api_key", "")
+        _claude_status = "🟢 Connected" if _claude_key_saved.startswith("sk-ant-") else "🔴 Not set"
+        st.caption(f"Status: {_claude_status} | Auto-report every 4h via cron")
+        _claude_key_input = st.text_input(
+            "Claude API Key (sk-ant-...)",
+            value="",
+            type="password",
+            placeholder="sk-ant-api03-...",
+            key="claude_api_key_input",
+        )
+        if st.button("💾 Save Claude API Key"):
+            if _claude_key_input.startswith("sk-ant-"):
+                db.save_setting("claude_api_key", _claude_key_input)
+                st.success("Claude API key saved ✅ — AI monitor will use Claude Haiku")
+            elif _claude_key_input == "":
+                st.warning("Key မထည့်ဘဲ မသိမ်းပါဘူး")
+            else:
+                st.error("Key format မမှန်ဘူး — sk-ant- နဲ့ စရမယ်")
+        if _claude_key_saved.startswith("sk-ant-"):
+            if st.button("🗑 Remove Claude Key (use rule-based)"):
+                db.save_setting("claude_api_key", "")
+                st.success("Removed — monitor will fall back to rule-based analysis")
+                st.rerun()
+
     with st.expander("🤖 3. LightGBM Model", expanded=False):
         select("Retrain Schedule", "lgbm_retrain_schedule", ["daily", "weekly", "manual"],
                db.get_setting("lgbm_retrain_schedule", "weekly"))
