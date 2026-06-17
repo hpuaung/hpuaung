@@ -229,6 +229,15 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
             db.log_event("GUARD_BLOCK", f"{symbol} {strategy}: {reason}")
             return
 
+    # Swing: require high LGBM confidence — only enter on strong, confirmed setups.
+    # Scalping watches every tick; swing waits for the right moment.
+    if strategy == "swing":
+        _min_lgbm = db.get_float("swing_min_lgbm", 0.65)
+        if lgbm_score < _min_lgbm:
+            db.log_event("SWING_LGBM_SKIP",
+                         f"{symbol} lgbm={lgbm_score:.2f} < {_min_lgbm:.2f}")
+            return
+
     # Attach ATR for AI sizing fidelity.
     signal["atr"] = indicators.safe(df_entry.get("atr"))
 
