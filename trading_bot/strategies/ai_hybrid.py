@@ -169,13 +169,13 @@ def run(df_entry, trend_res, reversion_res, breakout_res,
 
     if direction == "BUY":
         entry = close
-        sl = entry - atr * 1.5
+        sl = entry - atr * 1.2
         tp1 = entry + atr * 2.0
         tp2 = entry + atr * 4.0
         tp3 = entry + atr * 5.1
     else:
         entry = close
-        sl = entry + atr * 1.5
+        sl = entry + atr * 1.2
         tp1 = entry - atr * 2.0
         tp2 = entry - atr * 4.0
         tp3 = entry - atr * 5.1
