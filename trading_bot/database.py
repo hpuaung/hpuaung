@@ -644,6 +644,7 @@ DEFAULTS = {
     "max_concurrent_trades": "5",
     "lev_risk_hard_cap_pct": "10.0",
     "paper_slippage_pct": "0.05",
+    "min_rr_ratio": "1.5",
     "selected_pairs": "BTCUSDT,ETHUSDT,SOLUSDT",
 
     # Scalping engine

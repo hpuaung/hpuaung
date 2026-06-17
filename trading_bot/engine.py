@@ -247,6 +247,22 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
         signal["tp1"] = signal["tp2"] = signal["tp3"] = tp
 
     # -----------------------------------------------------------------------
+    # Risk:Reward filter — skip entries where potential loss > potential gain.
+    # Trades with inverted R:R drag down PnL even at 50%+ win rates.
+    # -----------------------------------------------------------------------
+    _min_rr = db.get_float("min_rr_ratio", 1.5)
+    try:
+        _sl_dist = abs(float(signal["entry"]) - float(signal["sl"]))
+        _tp_dist = abs(float(signal["tp1"]) - float(signal["entry"]))
+        if _sl_dist > 0 and (_tp_dist / _sl_dist) < _min_rr:
+            db.log_event("RR_SKIP",
+                         f"{symbol} {strategy} RR={_tp_dist/_sl_dist:.2f} < {_min_rr}")
+            db.log_signal(symbol, triggered or strategy, lgbm_score, news_score, "RR_SKIP")
+            return
+    except Exception:  # noqa: BLE001
+        pass
+
+    # -----------------------------------------------------------------------
     # Adaptive self-learning entry filters
     # The bot learns from its own closed-trade history (real trades only).
     # Each filter only activates once there are enough trades in that context

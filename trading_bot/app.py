@@ -923,6 +923,10 @@ def tab_settings():
                db.get_int("max_concurrent_trades", 5), is_int=True)
         slider("Lev×Risk Hard Cap %", "lev_risk_hard_cap_pct", 5.0, 20.0, 0.5,
                db.get_float("lev_risk_hard_cap_pct", 10.0))
+        slider("Min Risk:Reward Ratio", "min_rr_ratio", 1.0, 3.0, 0.1,
+               db.get_float("min_rr_ratio", 1.5))
+        st.caption("Skip entries where TP1 distance < this × SL distance. "
+                   "1.5 = TP must be 1.5× further than SL. Fixes inverted R:R.")
         slider("Paper Slippage % (realism)", "paper_slippage_pct", 0.0, 0.30, 0.01,
                db.get_float("paper_slippage_pct", 0.05))
         st.caption("Paper trades simulate real entry + stop-market slippage so paper "
