@@ -166,8 +166,16 @@ def execute_order(symbol, strategy, signal, *, equity, multiplier, api_mode,
 
     # --- Paper mode: simulate only ---
     if paper_mode:
+        # Paper realism: a real market entry fills WORSE than the signal price
+        # (BUY higher, SELL lower) due to spread + slippage. Apply the same
+        # adverse slippage to the paper entry so paper PnL is not over-optimistic.
+        slip = db.get_float("paper_slippage_pct", 0.05) / 100.0
+        d = 1 if side == "BUY" else -1
+        filled = bc.round_price(entry * (1 + slip * d), sized["filters"]["tickSize"])
+        position["entry_price"] = filled
+        position["fees_estimated"] = filled * qty * TAKER_FEE * 2
         pos_id = db.insert_position(position)
-        db.log_event("PAPER_OPEN", f"{symbol} {side} qty={qty} @ {entry}")
+        db.log_event("PAPER_OPEN", f"{symbol} {side} qty={qty} @ {filled} (signal {entry})")
         return pos_id
 
     # --- Real mode ---

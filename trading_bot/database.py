@@ -643,6 +643,7 @@ DEFAULTS = {
     "max_drawdown_pause_pct": "25.0",
     "max_concurrent_trades": "5",
     "lev_risk_hard_cap_pct": "10.0",
+    "paper_slippage_pct": "0.05",
     "selected_pairs": "BTCUSDT,ETHUSDT,SOLUSDT",
 
     # Scalping engine

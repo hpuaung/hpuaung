@@ -77,6 +77,14 @@ def _record_close(pos, qty, exit_price, reason, notifier=None):
     entry = float(pos["entry_price"])
     side = pos["side"]
     d = _dir(side)
+    # Paper realism: stop-market exits (SL / Trail / MaxDays) fill WORSE than the
+    # trigger price on a real exchange, while TP limit orders fill at the exact
+    # price. Apply adverse slippage to paper stop-market fills so paper PnL
+    # mirrors real conditions instead of idealised exact-price exits. Without
+    # this, paper looks profitable while real loses on the slippage difference.
+    if pos.get("paper_mode") and reason in ("SL", "Trail", "MaxDays"):
+        slip = db.get_float("paper_slippage_pct", 0.05) / 100.0
+        exit_price = exit_price * (1 - slip * d)  # always worse for the position
     gross = (exit_price - entry) * qty * d
     fees = (entry * qty + exit_price * qty) * TAKER_FEE
     net = gross - fees

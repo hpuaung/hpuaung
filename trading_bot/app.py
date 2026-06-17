@@ -923,6 +923,11 @@ def tab_settings():
                db.get_int("max_concurrent_trades", 5), is_int=True)
         slider("Lev×Risk Hard Cap %", "lev_risk_hard_cap_pct", 5.0, 20.0, 0.5,
                db.get_float("lev_risk_hard_cap_pct", 10.0))
+        slider("Paper Slippage % (realism)", "paper_slippage_pct", 0.0, 0.30, 0.01,
+               db.get_float("paper_slippage_pct", 0.05))
+        st.caption("Paper trades simulate real entry + stop-market slippage so paper "
+                   "results mirror REAL conditions (fees already included). 0.05% ≈ "
+                   "typical liquid-pair slippage. Set 0 for idealised fills.")
 
     with st.expander("💵 5. Starting Balance / Reset Paper Account", expanded=False):
         st.write(f"Current paper start capital: **${db.get_float('starting_balance', 0):,.2f}**")
