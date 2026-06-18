@@ -168,10 +168,14 @@ def apply_session_filter(strategy):
 # ---------------------------------------------------------------------------
 # Concurrency guard
 # ---------------------------------------------------------------------------
-def apply_concurrency_guard():
-    max_trades = db.get_int("max_concurrent_trades", 5)
-    if db.count_open_positions() >= max_trades:
-        return False, f"Max concurrent trades {max_trades} reached"
+def apply_concurrency_guard(strategy):
+    """Per-engine concurrency. A single global cap let fast scalping fill every
+    slot and starve swing of its 1-2 daily entries, so each engine now gets its
+    own limit (falling back to the global cap when no per-engine one is set)."""
+    max_trades = db.get_int(f"{strategy}_max_trades",
+                            db.get_int("max_concurrent_trades", 3))
+    if db.count_open_positions(strategy=strategy) >= max_trades:
+        return False, f"Max {strategy} trades {max_trades} reached"
     return True, ""
 
 

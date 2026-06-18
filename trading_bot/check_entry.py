@@ -43,7 +43,7 @@ if sig["signal"] != "NONE":
     print(" blackout   :", risk_guard.apply_blackout_guard())
     print(" correlation:", risk_guard.apply_correlation_guard(sig["signal"], strat))
     print(" session    :", risk_guard.apply_session_filter(strat))
-    print(" concurrency:", risk_guard.apply_concurrency_guard())
+    print(" concurrency:", risk_guard.apply_concurrency_guard(strat))
     wr, n = db.winrate(strat, sym)
     print(f" winrate    : {wr}% over {n} (skips if n>=15 and <40%)")
 

@@ -277,7 +277,10 @@ def process_position(pos, notifier=None):
 
     # --- Max hold days (swing only) ---
     if strat == "swing":
-        max_days = 7 if db.get_bool("swing_auto_maxhold", True) else db.get_int("swing_max_hold_days", 7)
+        # Swing is a 1-2 day style: cap the hold at swing_max_hold_days (default 2)
+        # even in auto mode. The old auto branch forced a 7-day hold, far longer
+        # than the intended swing horizon.
+        max_days = db.get_int("swing_max_hold_days", 2)
         hours, _ = _hold_duration(pos)
         if hours >= max_days * 24:
             _close_full(pos, price, "MaxDays", api_mode, notifier)

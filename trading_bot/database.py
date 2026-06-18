@@ -726,6 +726,7 @@ DEFAULTS = {
     "swing_funding_weight": "0.20",
     "swing_corr_filter": "1",
     "swing_max_corr_trades": "2",
+    "swing_max_trades": "2",
 
     # VPS optimizer
     "vps_auto_clean_on": "1",

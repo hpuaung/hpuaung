@@ -222,7 +222,7 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
         risk_guard.apply_blackout_guard(),
         risk_guard.apply_correlation_guard(signal["signal"], strategy),
         risk_guard.apply_session_filter(strategy),
-        risk_guard.apply_concurrency_guard(),
+        risk_guard.apply_concurrency_guard(strategy),
     ]
     for ok, reason in guards:
         if not ok:
