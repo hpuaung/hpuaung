@@ -811,3 +811,21 @@ def _seed_defaults():
     missing = {k: v for k, v in DEFAULTS.items() if k not in existing}
     if missing:
         save_settings(missing)
+    _migrate_settings()
+
+
+def _migrate_settings():
+    """One-time upgrades for settings that existed before a code change.
+    Only updates if the value is still at the old default (user customisations
+    are left untouched). Safe to call on every startup — no-ops when done."""
+    upgrades = [
+        # key              old_value   new_value
+        ("min_rr_ratio",        "1.5",  "2.0"),   # 1:2 everywhere
+        ("scalping_tp1_pct",    "0.5",  "0.6"),   # manual-mode TP → 1:2
+        ("scalping_trail_auto", "0",    "1"),      # trailing SL on
+        ("swing_trail_auto",    "0",    "1"),      # trailing SL on
+        ("scalping_max_trades", "3",    "1"),      # one scalp at a time
+    ]
+    for key, old_val, new_val in upgrades:
+        if get_setting(key) == old_val:
+            save_setting(key, new_val)
