@@ -249,11 +249,11 @@ def process_position(pos, notifier=None):
         else:
             trail_pct = db.get_float(f"{strat}_trail_pct", 1.5)
         cur_trail = pos.get("trail_sl_price") or 0.0
-        # Arm the trail only after the trade is up by 2x the trail distance, then
-        # trail 1x behind. This locks in ~1x trail_pct of REAL profit instead of
-        # closing winners at break-even (the old 1x trigger trailed 1x behind, so
-        # the stop sat at entry and tiny wobbles closed winners for ~$0).
-        arm_pct = trail_pct * 2.0
+        # How far in profit before the trail arms. Scalping uses 1x (arm as soon
+        # as any profit = trail_pct): protects scalp gains before price reverses.
+        # Swing uses 2x (arm only after meaningful move): avoids closing swing
+        # runners on normal volatility before they reach their real targets.
+        arm_pct = trail_pct * db.get_float(f"{strat}_trail_arm_mult", 2.0)
         if d > 0:
             profit_trigger = entry * (1 + arm_pct / 100.0)
             if price >= profit_trigger:

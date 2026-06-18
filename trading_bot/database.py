@@ -644,7 +644,7 @@ DEFAULTS = {
     "max_concurrent_trades": "2",
     "lev_risk_hard_cap_pct": "10.0",
     "paper_slippage_pct": "0.05",
-    "min_rr_ratio": "1.5",
+    "min_rr_ratio": "2.0",
     "selected_pairs": "BTCUSDT,ETHUSDT,SOLUSDT",
 
     # Scalping engine
@@ -657,7 +657,7 @@ DEFAULTS = {
     "scalping_auto_risk": "0",
     "scalping_base_leverage": "10",
     "scalping_base_risk_pct": "1.8",
-    "scalping_tp1_pct": "0.5",
+    "scalping_tp1_pct": "0.6",
     "scalping_tp2_pct": "0.8",
     "scalping_tp3_pct": "1.2",
     "scalping_tp1_close_pct": "100",
@@ -666,7 +666,7 @@ DEFAULTS = {
     "scalping_sl_pct": "0.3",
     "scalping_partial_tp": "0",
     "scalping_auto_be": "1",
-    "scalping_max_trades": "3",
+    "scalping_max_trades": "1",
     "scalping_ai_threshold": "0.75",
     "scalping_trend_on": "1",
     "scalping_reversion_on": "1",
@@ -727,6 +727,7 @@ DEFAULTS = {
     "swing_corr_filter": "1",
     "swing_max_corr_trades": "2",
     "swing_max_trades": "2",
+    "swing_require_consensus": "1",
 
     # VPS optimizer
     "vps_auto_clean_on": "1",
@@ -772,8 +773,10 @@ DEFAULTS = {
     "swing_auto_tpsl": "1",
     "scalping_tp_pct": "1.5",
     "swing_tp_pct": "4.0",
-    "scalping_trail_auto": "0",
-    "swing_trail_auto": "0",
+    "scalping_trail_auto": "1",
+    "scalping_trail_arm_mult": "1.0",
+    "swing_trail_auto": "1",
+    "swing_trail_arm_mult": "2.0",
     "scalping_trail_pct": "0.5",
     "scalping_auto_threshold": "1",
     "swing_auto_threshold": "1",

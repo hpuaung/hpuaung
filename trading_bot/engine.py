@@ -87,6 +87,22 @@ def aggregate_signal(symbol, strategy, df_entry, df_confirm, df_trend,
                                    ("Breakout", brk_res)]
             if res and res["signal"] != "NONE"
         )
+
+        # Swing high-conviction filter: at least 2 of the 3 base strategies must
+        # agree on direction before proceeding to ai_hybrid. Trend and reversion
+        # fire under opposite conditions by design, so a single-strategy signal
+        # is not high-conviction enough for a 1-2 day hold. Scalping doesn't need
+        # this — it operates in and out fast and can tolerate noisier entries.
+        if strategy == "swing" and db.get_bool("swing_require_consensus", True):
+            _active = [r for r in (trend_res, rev_res, brk_res)
+                       if r and r.get("signal") not in ("NONE", None)]
+            _buys = sum(1 for r in _active if r["signal"] == "BUY")
+            _sells = sum(1 for r in _active if r["signal"] == "SELL")
+            if _buys < 2 and _sells < 2:
+                db.log_event("CONSENSUS_SKIP",
+                             f"{symbol} swing: {_buys}xBUY {_sells}xSELL — need 2+ to agree")
+                return {"signal": "NONE"}, triggered or "consensus", 0.0
+
         if db.get_bool(f"{strategy}_auto_threshold", True):
             ai_threshold = risk_guard.recommended_threshold(strategy)
         else:
