@@ -272,6 +272,26 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
         pass
 
     # -----------------------------------------------------------------------
+    # Minimum TP distance floor — skip micro-targets that fees would eat.
+    # In low-volatility conditions an ATR/structure TP can sit only a few
+    # hundredths of a percent from entry; after round-trip taker fees (~0.08%)
+    # plus slippage the realised "win" is near zero (seen as +0.01-0.06 closes).
+    # Requiring TP1 to be at least `min_tp_pct` away keeps wins meaningfully
+    # larger than costs. Applies in both Auto and Manual TP/SL modes.
+    # -----------------------------------------------------------------------
+    _min_tp_pct = db.get_float("min_tp_pct", 0.4)
+    try:
+        _entry = float(signal["entry"])
+        _tp_pct_dist = abs(float(signal["tp1"]) - _entry) / max(_entry, 1e-9) * 100.0
+        if _tp_pct_dist < _min_tp_pct:
+            db.log_event("TP_FLOOR_SKIP",
+                         f"{symbol} {strategy} TP={_tp_pct_dist:.2f}% < {_min_tp_pct}%")
+            db.log_signal(symbol, triggered or strategy, lgbm_score, news_score, "TP_FLOOR_SKIP")
+            return
+    except Exception:  # noqa: BLE001
+        pass
+
+    # -----------------------------------------------------------------------
     # Adaptive self-learning entry filters
     # The bot learns from its own closed-trade history (real trades only).
     # Each filter only activates once there are enough trades in that context

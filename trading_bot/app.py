@@ -927,6 +927,11 @@ def tab_settings():
                db.get_float("min_rr_ratio", 2.0))
         st.caption("Skip entries where TP1 distance < this × SL distance. "
                    "2.0 = TP must be 2× further than SL. Fixes inverted R:R.")
+        slider("Min TP Distance % (fee floor)", "min_tp_pct", 0.0, 2.0, 0.05,
+               db.get_float("min_tp_pct", 0.4))
+        st.caption("Skip entries whose TP1 target is closer than this %. "
+                   "Round-trip fee+slippage ≈ 0.13%, so a 0.4% floor keeps "
+                   "wins well above costs and filters fee-eaten micro-scalps.")
         slider("Paper Slippage % (realism)", "paper_slippage_pct", 0.0, 0.30, 0.01,
                db.get_float("paper_slippage_pct", 0.05))
         st.caption("Paper trades simulate real entry + stop-market slippage so paper "

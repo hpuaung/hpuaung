@@ -645,6 +645,7 @@ DEFAULTS = {
     "lev_risk_hard_cap_pct": "10.0",
     "paper_slippage_pct": "0.05",
     "min_rr_ratio": "2.0",
+    "min_tp_pct": "0.4",
     "selected_pairs": "BTCUSDT,ETHUSDT,SOLUSDT",
 
     # Scalping engine
