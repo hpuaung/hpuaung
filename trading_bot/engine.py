@@ -229,14 +229,14 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
             db.log_event("GUARD_BLOCK", f"{symbol} {strategy}: {reason}")
             return
 
-    # Swing: require high LGBM confidence — only enter on strong, confirmed setups.
-    # Scalping watches every tick; swing waits for the right moment.
-    if strategy == "swing":
-        _min_lgbm = db.get_float("swing_min_lgbm", 0.65)
-        if lgbm_score < _min_lgbm:
-            db.log_event("SWING_LGBM_SKIP",
-                         f"{symbol} lgbm={lgbm_score:.2f} < {_min_lgbm:.2f}")
-            return
+    # Swing selectivity is already handled inside ai_hybrid (market-type routing,
+    # cumulative-score floor and LGBM direction agreement). A second hard LGBM
+    # floor here only stacked on top of that and silently killed EVERY swing
+    # entry: with no trained model lgbm_score == the auto threshold (~0.60) and
+    # an uncertain 3-class model maxes around 0.33-0.55, so lgbm_score < 0.65 was
+    # always true. Swing must take its 1-2 daily setups when conditions match, so
+    # this redundant gate is removed — the self-learning win-rate filters below
+    # still protect against contexts the bot has actually proven to lose in.
 
     # Attach ATR for AI sizing fidelity.
     signal["atr"] = indicators.safe(df_entry.get("atr"))
