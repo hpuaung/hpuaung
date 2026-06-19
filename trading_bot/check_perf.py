@@ -95,7 +95,8 @@ print("        adding predictive value and should be de-emphasised.")
 print("=" * 64)
 print("CURRENT SETTINGS")
 print("=" * 64)
-for k in ("min_rr_ratio", "min_tp_pct", "swing_min_lgbm", "sl_cooldown_on",
+for k in ("min_rr_ratio", "min_tp_pct", "atr_sl_enabled", "atr_sl_mult",
+          "swing_min_lgbm", "sl_cooldown_on", "learn_from_paper",
           "lgbm_accuracy", "lgbm_last_trained",
           "win_model_samples", "win_model_acc"):
     print(f"  {k:20} = {db.get_setting(k)}")

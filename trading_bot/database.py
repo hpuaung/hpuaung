@@ -650,6 +650,8 @@ DEFAULTS = {
     "min_rr_ratio": "2.0",
     "min_tp_pct": "0.4",
     "learn_from_paper": "1",
+    "atr_sl_enabled": "1",
+    "atr_sl_mult": "1.5",
     "selected_pairs": "BTCUSDT,ETHUSDT,SOLUSDT",
 
     # Scalping engine

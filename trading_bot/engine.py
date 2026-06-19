@@ -259,6 +259,25 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
         signal["tp1"] = signal["tp2"] = signal["tp3"] = tp
 
     # -----------------------------------------------------------------------
+    # ATR-based stop loss (Auto TP/SL mode). The strategies set a structural SL
+    # (e.g. trend uses EMA50), which can sit far from entry in a strong trend
+    # (oversized losses) or too tight in chop (whipsaw stop-outs). Replacing it
+    # with SL = entry ∓ atr_sl_mult × ATR keeps the risk distance proportional
+    # to current volatility. TP levels are left to the strategy, so the R:R
+    # filter below still governs whether the resulting trade is worth taking.
+    # Tunable via atr_sl_enabled / atr_sl_mult (Settings or getset).
+    # -----------------------------------------------------------------------
+    if db.get_bool(f"{strategy}_auto_tpsl", True) and db.get_bool("atr_sl_enabled", True):
+        _atr = float(signal.get("atr") or 0.0)
+        _entry = float(signal["entry"])
+        if _atr > 0 and _entry > 0:
+            _mult = db.get_float("atr_sl_mult", 1.5)
+            if signal["signal"] == "BUY":
+                signal["sl"] = _entry - _mult * _atr
+            else:
+                signal["sl"] = _entry + _mult * _atr
+
+    # -----------------------------------------------------------------------
     # Risk:Reward filter — skip entries where potential loss > potential gain.
     # Trades with inverted R:R drag down PnL even at 50%+ win rates.
     # -----------------------------------------------------------------------

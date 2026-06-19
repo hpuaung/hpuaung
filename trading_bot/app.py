@@ -932,6 +932,13 @@ def tab_settings():
         st.caption("Skip entries whose TP1 target is closer than this %. "
                    "Round-trip fee+slippage ≈ 0.13%, so a 0.4% floor keeps "
                    "wins well above costs and filters fee-eaten micro-scalps.")
+        bool_toggle("ATR-based Stop Loss (Auto mode)", "atr_sl_enabled", True)
+        slider("ATR SL Multiplier", "atr_sl_mult", 0.5, 4.0, 0.1,
+               db.get_float("atr_sl_mult", 1.5))
+        st.caption("In Auto mode, set SL = entry ∓ (this × ATR) instead of the "
+                   "strategy's structural SL. Scales risk to volatility — avoids "
+                   "the far EMA50 stops that caused oversized losses. Lower = "
+                   "tighter, higher = wider.")
         slider("Paper Slippage % (realism)", "paper_slippage_pct", 0.0, 0.30, 0.01,
                db.get_float("paper_slippage_pct", 0.05))
         st.caption("Paper trades simulate real entry + stop-market slippage so paper "
