@@ -214,13 +214,16 @@ def learning_count():
 
 def learning_dataset():
     """Return (list_of_feature_lists, list_of_won) from the learning table.
-    Only real trades (paper_mode=0) are used so the model learns from live
-    market conditions rather than simulated fills."""
+    By default (learn_from_paper=1) every closed trade feeds the win model, so
+    the bot keeps self-learning while paper trading. Set learn_from_paper=0 to
+    restrict learning to real fills (paper_mode=0) once trading live."""
     import json as _json
     conn = get_conn()
-    rows = conn.execute(
-        "SELECT features, won FROM learning WHERE features IS NOT NULL AND paper_mode=0"
-    ).fetchall()
+    if get_bool("learn_from_paper", True):
+        q = "SELECT features, won FROM learning WHERE features IS NOT NULL"
+    else:
+        q = "SELECT features, won FROM learning WHERE features IS NOT NULL AND paper_mode=0"
+    rows = conn.execute(q).fetchall()
     X, y = [], []
     for r in rows:
         try:
@@ -646,6 +649,7 @@ DEFAULTS = {
     "paper_slippage_pct": "0.05",
     "min_rr_ratio": "2.0",
     "min_tp_pct": "0.4",
+    "learn_from_paper": "1",
     "selected_pairs": "BTCUSDT,ETHUSDT,SOLUSDT",
 
     # Scalping engine

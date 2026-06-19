@@ -301,9 +301,14 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
     # to be statistically meaningful — before then it stays out of the way.
     # -----------------------------------------------------------------------
 
+    # Which trade history the self-learning filters read. When learn_from_paper
+    # is on (default) we include paper trades too — otherwise, while paper
+    # trading, these filters and the win model see zero history and never learn.
+    _lpm = None if db.get_bool("learn_from_paper", True) else 0
+
     # 1. Pair win rate (all directions): if this pair has been a chronic loser
-    #    across 15+ real trades, skip until the pattern improves.
-    wr_pair, n_pair = db.winrate(strategy, symbol, paper_mode=0)
+    #    across 15+ trades, skip until the pattern improves.
+    wr_pair, n_pair = db.winrate(strategy, symbol, paper_mode=_lpm)
     if n_pair >= 15 and wr_pair is not None and wr_pair < 40.0:
         db.log_event("WINRATE_SKIP", f"{symbol} {strategy} pair_wr={wr_pair:.0f}% over {n_pair} trades")
         db.log_signal(symbol, triggered or strategy, lgbm_score, news_score, "LOWWR_SKIP")
@@ -313,7 +318,7 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
     #    times, stop entering that direction on this pair until history improves.
     if db.get_bool(f"{strategy}_dir_filter", True):
         wr_dir, n_dir = db.winrate(strategy, symbol,
-                                   side=signal["signal"], paper_mode=0)
+                                   side=signal["signal"], paper_mode=_lpm)
         if n_dir >= 10 and wr_dir is not None and wr_dir < 35.0:
             db.log_event("DIRWR_SKIP",
                          f"{symbol} {strategy} {signal['signal']} dir_wr={wr_dir:.0f}% over {n_dir} trades")
@@ -324,7 +329,7 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
     #    10+ real trades for this strategy, wait for a better hour.
     if db.get_bool(f"{strategy}_hour_filter", True):
         cur_hour = datetime.now(timezone.utc).hour
-        wr_hour, n_hour = db.winrate_hour(cur_hour, strategy=strategy)
+        wr_hour, n_hour = db.winrate_hour(cur_hour, strategy=strategy, paper_mode=_lpm)
         if n_hour >= 10 and wr_hour is not None and wr_hour < 35.0:
             db.log_event("HOURWR_SKIP",
                          f"{symbol} {strategy} UTC_hour={cur_hour} hour_wr={wr_hour:.0f}% over {n_hour} trades")
@@ -335,7 +340,7 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
     #    the Asian session — skip that combination specifically.
     if db.get_bool(f"{strategy}_session_pair_filter", True):
         cur_session = _current_session()
-        wr_sess, n_sess = db.winrate_session_pair(cur_session, symbol, strategy=strategy)
+        wr_sess, n_sess = db.winrate_session_pair(cur_session, symbol, strategy=strategy, paper_mode=_lpm)
         if n_sess >= 8 and wr_sess is not None and wr_sess < 35.0:
             db.log_event("SESSWR_SKIP",
                          f"{symbol} {strategy} session={cur_session} sess_wr={wr_sess:.0f}% over {n_sess} trades")
