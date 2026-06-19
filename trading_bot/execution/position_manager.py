@@ -117,9 +117,13 @@ def _record_close(pos, qty, exit_price, reason, notifier=None):
     }
     db.insert_trade(trade)
     risk_guard.update_streak(net)
-    # Start a re-entry cooldown after a stop loss to stop the same losing signal
-    # from re-firing on the same (unchanged) entry candle.
-    if reason == "SL":
+    # Start a re-entry cooldown after any non-profitable close so the same
+    # unchanged entry signal does not immediately re-fire on the same candle.
+    # Originally only SL triggered this, but break-even / tiny-loss TP and losing
+    # Trail exits re-fired too (e.g. the XRP scalp that opened twice in 3 min on
+    # 2026-06-15, after the SL-only cooldown was added). Winning closes are exempt
+    # so a genuinely strong trend can still be re-entered.
+    if net <= 0:
         try:
             _set_sl_cooldown(pos)
         except Exception:  # noqa: BLE001
