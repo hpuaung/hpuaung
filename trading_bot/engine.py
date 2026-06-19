@@ -229,11 +229,14 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
             db.log_event("GUARD_BLOCK", f"{symbol} {strategy}: {reason}")
             return
 
-    # Swing: require high LGBM confidence — only enter on strong, confirmed setups.
-    # Scalping watches every tick; swing waits for the right moment.
+    # Swing: optional LGBM-confidence gate. Default 0.0 (disabled): live paper
+    # results showed the direction model was anti-predictive — high-confidence
+    # entries (lgbm>=0.70) won ~38% while model-free entries won ~61% — so gating
+    # swing on it actively hurt. Kept as a tunable (getset swing_min_lgbm) so the
+    # gate can be re-enabled if a retrained model later proves predictive.
     if strategy == "swing":
-        _min_lgbm = db.get_float("swing_min_lgbm", 0.65)
-        if lgbm_score < _min_lgbm:
+        _min_lgbm = db.get_float("swing_min_lgbm", 0.0)
+        if _min_lgbm > 0 and lgbm_score < _min_lgbm:
             db.log_event("SWING_LGBM_SKIP",
                          f"{symbol} lgbm={lgbm_score:.2f} < {_min_lgbm:.2f}")
             return

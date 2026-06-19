@@ -709,7 +709,7 @@ DEFAULTS = {
     "swing_trail_pct": "1.5",
     "swing_max_hold_days": "2",
     "swing_ai_threshold": "0.85",
-    "swing_min_lgbm": "0.65",
+    "swing_min_lgbm": "0.0",
     "swing_trend_on": "1",
     "swing_reversion_on": "1",
     "swing_breakout_on": "1",
