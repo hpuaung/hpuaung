@@ -11,6 +11,7 @@ thread — so a Streamlit rerun never restarts or disturbs trading.
 import io
 import csv
 import json
+import os
 from datetime import datetime, timezone
 
 import streamlit as st
@@ -68,7 +69,11 @@ st.markdown(
 
 db.init_db()
 
-if "engine_started" not in st.session_state:
+# Run the engine + background services inside the dashboard process ONLY when an
+# external engine process is not handling them. Set ENGINE_EXTERNAL=1 in the
+# dashboard's systemd unit when running run_engine.py as a separate service, so
+# the UI stays responsive (the engine no longer competes with it for the GIL).
+if os.environ.get("ENGINE_EXTERNAL") != "1" and "engine_started" not in st.session_state:
     st.session_state["engine_started"] = True
     vps_optimizer.start_vps_monitor()
     lgbm.ensure_model_on_start()
