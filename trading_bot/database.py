@@ -190,6 +190,7 @@ def init_db():
 
         conn.commit()
     _seed_defaults()
+    _seed_from_env()
 
 
 # ---------------------------------------------------------------------------
@@ -831,3 +832,47 @@ def _seed_defaults():
     missing = {k: v for k, v in DEFAULTS.items() if k not in existing}
     if missing:
         save_settings(missing)
+
+
+# Map .env / environment variable names to settings keys. Lets API keys, tokens
+# etc. live in trading_bot/.env (git-ignored) so they survive a DB reset and
+# never need re-entering in the dashboard.
+_ENV_MAP = {
+    "BINANCE_TESTNET_API": "binance_testnet_api",
+    "BINANCE_TESTNET_SECRET": "binance_testnet_secret",
+    "BINANCE_LIVE_API": "binance_live_api",
+    "BINANCE_LIVE_SECRET": "binance_live_secret",
+    "HF_TOKEN": "hf_token",
+    "GNEWS_API": "gnews_api",
+    "TELEGRAM_TOKEN": "telegram_token",
+    "TELEGRAM_CHAT_ID": "telegram_chat_id",
+}
+
+
+def _seed_from_env():
+    """Seed secret settings from trading_bot/.env (and the process environment)
+    so keys persist across DB resets / fresh clones. Only fills a setting that is
+    currently empty — a value set in the dashboard is never overwritten."""
+    values = {}
+    env_path = os.path.join(os.path.dirname(DB_PATH), ".env")
+    try:
+        if os.path.exists(env_path):
+            with open(env_path) as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    k, v = line.split("=", 1)
+                    values[k.strip()] = v.strip().strip('"').strip("'")
+    except Exception:  # noqa: BLE001
+        pass
+    for env_key in _ENV_MAP:
+        if os.environ.get(env_key):
+            values[env_key] = os.environ[env_key]  # real env wins over .env file
+    for env_key, set_key in _ENV_MAP.items():
+        val = values.get(env_key, "")
+        if val and not (get_setting(set_key) or ""):
+            try:
+                save_setting(set_key, val)
+            except Exception:  # noqa: BLE001
+                pass
