@@ -79,7 +79,41 @@ if "engine_started" not in st.session_state:
 
 # ---------------------------------------------------------------------------
 # Auto-saving widget helpers
+#
+# Normally each widget saves immediately on change (one rerun per change). On a
+# small VPS, where the dashboard shares a process with the trading engine, that
+# makes the UI feel like it is constantly "running/connecting". Wrapping a group
+# of widgets in `with settings_form(...)` batches them: nothing reruns until the
+# Apply button is pressed, so you can adjust everything first, then apply once.
 # ---------------------------------------------------------------------------
+from contextlib import contextmanager
+
+_FORM = None  # active settings_form field collector, or None for live-save mode
+
+
+def _reg(key, kind):
+    if _FORM is not None:
+        _FORM.append((key, kind))
+
+
+@contextmanager
+def settings_form(name, label="💾 Apply changes"):
+    """Group widgets so they only save + rerun once, on the Apply button."""
+    global _FORM
+    with st.form(name):
+        _FORM = []
+        try:
+            yield
+        finally:
+            fields, _FORM = _FORM, None
+        if st.form_submit_button(label):
+            for key, kind in fields:
+                v = st.session_state.get(f"w_{key}")
+                db.save_setting(key, ("1" if v else "0") if kind == "bool" else v)
+            st.success("✅ Saved")
+            st.rerun()
+
+
 def _init(ss_key, value):
     if ss_key not in st.session_state:
         st.session_state[ss_key] = value
@@ -88,8 +122,12 @@ def _init(ss_key, value):
 def bool_toggle(label, key, default=False):
     ss = f"w_{key}"
     _init(ss, db.get_bool(key, default))
-    st.toggle(label, key=ss,
-              on_change=lambda: db.save_setting(key, "1" if st.session_state[ss] else "0"))
+    if _FORM is None:
+        st.toggle(label, key=ss,
+                  on_change=lambda: db.save_setting(key, "1" if st.session_state[ss] else "0"))
+    else:
+        st.toggle(label, key=ss)
+        _reg(key, "bool")
     return st.session_state[ss]
 
 
@@ -97,8 +135,12 @@ def slider(label, key, lo, hi, step, default, is_int=False):
     ss = f"w_{key}"
     cur = db.get_int(key, int(default)) if is_int else db.get_float(key, float(default))
     _init(ss, cur)
-    st.slider(label, lo, hi, key=ss, step=step,
-              on_change=lambda: db.save_setting(key, st.session_state[ss]))
+    if _FORM is None:
+        st.slider(label, lo, hi, key=ss, step=step,
+                  on_change=lambda: db.save_setting(key, st.session_state[ss]))
+    else:
+        st.slider(label, lo, hi, key=ss, step=step)
+        _reg(key, "num")
     return st.session_state[ss]
 
 
@@ -106,16 +148,24 @@ def number(label, key, default, is_int=False):
     ss = f"w_{key}"
     cur = db.get_int(key, int(default)) if is_int else db.get_float(key, float(default))
     _init(ss, cur)
-    st.number_input(label, key=ss,
-                    on_change=lambda: db.save_setting(key, st.session_state[ss]))
+    if _FORM is None:
+        st.number_input(label, key=ss,
+                        on_change=lambda: db.save_setting(key, st.session_state[ss]))
+    else:
+        st.number_input(label, key=ss)
+        _reg(key, "num")
     return st.session_state[ss]
 
 
 def text(label, key, password=False, default="", show_saved=False):
     ss = f"w_{key}"
     _init(ss, db.get_setting(key, default))
-    st.text_input(label, key=ss, type="password" if password else "default",
-                  on_change=lambda: db.save_setting(key, st.session_state[ss]))
+    if _FORM is None:
+        st.text_input(label, key=ss, type="password" if password else "default",
+                      on_change=lambda: db.save_setting(key, st.session_state[ss]))
+    else:
+        st.text_input(label, key=ss, type="password" if password else "default")
+        _reg(key, "text")
     if show_saved:
         cur = db.get_setting(key, "")
         if cur:
@@ -129,8 +179,12 @@ def select(label, key, options, default):
     ss = f"w_{key}"
     cur = db.get_setting(key, default)
     _init(ss, cur if cur in options else default)
-    st.selectbox(label, options, key=ss,
-                 on_change=lambda: db.save_setting(key, st.session_state[ss]))
+    if _FORM is None:
+        st.selectbox(label, options, key=ss,
+                     on_change=lambda: db.save_setting(key, st.session_state[ss]))
+    else:
+        st.selectbox(label, options, key=ss)
+        _reg(key, "text")
     return st.session_state[ss]
 
 
@@ -935,37 +989,40 @@ def tab_settings():
                        "(<$100→2, <$1k→4, <$10k→6, else 8); Min R:R adapts to "
                        "win-rate (losing→2.5, even→2.0, winning→1.8); Min TP "
                        "floor 0.4%. Other limits below stay as safe guard rails.")
-        slider("Daily Loss Limit %", "daily_loss_limit_pct", 1.0, 20.0, 0.5,
-               db.get_float("daily_loss_limit_pct", 10.0))
-        slider("Max Drawdown Pause %", "max_drawdown_pause_pct", 10.0, 50.0, 1.0,
-               db.get_float("max_drawdown_pause_pct", 25.0))
-        if not g_auto:
-            slider("Max Concurrent Trades", "max_concurrent_trades", 1, 10, 1,
-                   db.get_int("max_concurrent_trades", 5), is_int=True)
-        slider("Lev×Risk Hard Cap %", "lev_risk_hard_cap_pct", 5.0, 20.0, 0.5,
-               db.get_float("lev_risk_hard_cap_pct", 10.0))
-        if not g_auto:
-            slider("Min Risk:Reward Ratio", "min_rr_ratio", 1.0, 3.0, 0.1,
-                   db.get_float("min_rr_ratio", 2.0))
-            st.caption("Skip entries where TP1 distance < this × SL distance. "
-                       "2.0 = TP must be 2× further than SL. Fixes inverted R:R.")
-            slider("Min TP Distance % (fee floor)", "min_tp_pct", 0.0, 2.0, 0.05,
-                   db.get_float("min_tp_pct", 0.4))
-            st.caption("Skip entries whose TP1 target is closer than this %. "
-                       "Round-trip fee+slippage ≈ 0.13%, so a 0.4% floor keeps "
-                       "wins well above costs and filters fee-eaten micro-scalps.")
-        bool_toggle("ATR-based Stop Loss (Auto mode)", "atr_sl_enabled", True)
-        slider("ATR SL Multiplier", "atr_sl_mult", 0.5, 4.0, 0.1,
-               db.get_float("atr_sl_mult", 1.5))
-        st.caption("In Auto mode, set SL = entry ∓ (this × ATR) instead of the "
-                   "strategy's structural SL. Scales risk to volatility — avoids "
-                   "the far EMA50 stops that caused oversized losses. Lower = "
-                   "tighter, higher = wider.")
-        slider("Paper Slippage % (realism)", "paper_slippage_pct", 0.0, 0.30, 0.01,
-               db.get_float("paper_slippage_pct", 0.05))
-        st.caption("Paper trades simulate real entry + stop-market slippage so paper "
-                   "results mirror REAL conditions (fees already included). 0.05% ≈ "
-                   "typical liquid-pair slippage. Set 0 for idealised fills.")
+        st.caption("Adjust everything, then press **Apply** once (avoids the "
+                   "dashboard reloading on every change).")
+        with settings_form("global_risk_form"):
+            slider("Daily Loss Limit %", "daily_loss_limit_pct", 1.0, 20.0, 0.5,
+                   db.get_float("daily_loss_limit_pct", 10.0))
+            slider("Max Drawdown Pause %", "max_drawdown_pause_pct", 10.0, 50.0, 1.0,
+                   db.get_float("max_drawdown_pause_pct", 25.0))
+            if not g_auto:
+                slider("Max Concurrent Trades", "max_concurrent_trades", 1, 10, 1,
+                       db.get_int("max_concurrent_trades", 5), is_int=True)
+            slider("Lev×Risk Hard Cap %", "lev_risk_hard_cap_pct", 5.0, 20.0, 0.5,
+                   db.get_float("lev_risk_hard_cap_pct", 10.0))
+            if not g_auto:
+                slider("Min Risk:Reward Ratio", "min_rr_ratio", 1.0, 3.0, 0.1,
+                       db.get_float("min_rr_ratio", 2.0))
+                st.caption("Skip entries where TP1 distance < this × SL distance. "
+                           "2.0 = TP must be 2× further than SL. Fixes inverted R:R.")
+                slider("Min TP Distance % (fee floor)", "min_tp_pct", 0.0, 2.0, 0.05,
+                       db.get_float("min_tp_pct", 0.4))
+                st.caption("Skip entries whose TP1 target is closer than this %. "
+                           "Round-trip fee+slippage ≈ 0.13%, so a 0.4% floor keeps "
+                           "wins well above costs and filters fee-eaten micro-scalps.")
+            bool_toggle("ATR-based Stop Loss (Auto mode)", "atr_sl_enabled", True)
+            slider("ATR SL Multiplier", "atr_sl_mult", 0.5, 4.0, 0.1,
+                   db.get_float("atr_sl_mult", 1.5))
+            st.caption("In Auto mode, set SL = entry ∓ (this × ATR) instead of the "
+                       "strategy's structural SL. Scales risk to volatility — avoids "
+                       "the far EMA50 stops that caused oversized losses. Lower = "
+                       "tighter, higher = wider.")
+            slider("Paper Slippage % (realism)", "paper_slippage_pct", 0.0, 0.30, 0.01,
+                   db.get_float("paper_slippage_pct", 0.05))
+            st.caption("Paper trades simulate real entry + stop-market slippage so paper "
+                       "results mirror REAL conditions (fees already included). 0.05% ≈ "
+                       "typical liquid-pair slippage. Set 0 for idealised fills.")
 
     with st.expander("💵 5. Starting Balance / Reset Paper Account", expanded=False):
         st.write(f"Current paper start capital: **${db.get_float('starting_balance', 0):,.2f}**")
