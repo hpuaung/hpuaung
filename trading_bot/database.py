@@ -644,7 +644,7 @@ DEFAULTS = {
     "starting_balance": "0",
     "daily_loss_limit_pct": "10.0",
     "max_drawdown_pause_pct": "25.0",
-    "max_concurrent_trades": "2",
+    "max_concurrent_trades": "4",
     "lev_risk_hard_cap_pct": "10.0",
     "paper_slippage_pct": "0.05",
     "min_rr_ratio": "2.0",
@@ -652,7 +652,7 @@ DEFAULTS = {
     "learn_from_paper": "1",
     "atr_sl_enabled": "1",
     "atr_sl_mult": "1.5",
-    "selected_pairs": "BTCUSDT,ETHUSDT,SOLUSDT",
+    "selected_pairs": "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,LINKUSDT,AVAXUSDT,DOGEUSDT,ADAUSDT,LTCUSDT,DOTUSDT,ATOMUSDT",
 
     # Scalping engine
     "scalping_bot_on": "0",
@@ -691,7 +691,7 @@ DEFAULTS = {
     "scalping_funding_filter": "0",
     "scalping_funding_weight": "0.20",
     "scalping_corr_filter": "1",
-    "scalping_max_corr_trades": "2",
+    "scalping_max_corr_trades": "3",
 
     # Swing engine
     "swing_bot_on": "0",
@@ -712,7 +712,7 @@ DEFAULTS = {
     "swing_sl_pct": "2.0",
     "swing_partial_tp": "1",
     "swing_auto_be": "1",
-    "swing_trail_pct": "1.5",
+    "swing_trail_pct": "2.0",
     "swing_max_hold_days": "2",
     "swing_ai_threshold": "0.85",
     "swing_min_lgbm": "0.0",
@@ -780,7 +780,7 @@ DEFAULTS = {
     "swing_tp_pct": "4.0",
     "scalping_trail_auto": "0",
     "swing_trail_auto": "0",
-    "scalping_trail_pct": "0.5",
+    "scalping_trail_pct": "0.7",
     "scalping_auto_threshold": "1",
     "swing_auto_threshold": "1",
     "swing_auto_maxhold": "1",
