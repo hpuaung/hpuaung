@@ -267,6 +267,18 @@ def get_bool(key, default=False):
     return str(val) == "1"
 
 
+def auto_flag(key, default=True):
+    """A per-feature 'auto' flag that is ALSO forced on by the master Auto Pilot.
+
+    When auto_pilot is on the bot fully self-manages (timeframe, AI threshold,
+    risk sizing, ATR TP/SL, trailing, break-even, max-hold and every adaptive
+    win-rate filter), so the user can switch one toggle and walk away. When
+    auto_pilot is off, the individual per-engine auto toggle applies as before."""
+    if get_bool("auto_pilot", False):
+        return True
+    return get_bool(key, default)
+
+
 def save_setting(key, value):
     conn = get_conn()
     with _db_lock:
@@ -652,6 +664,11 @@ DEFAULTS = {
     "learn_from_paper": "1",
     "atr_sl_enabled": "1",
     "atr_sl_mult": "1.5",
+    # Master Auto Pilot: one switch forces every per-engine auto + adaptive
+    # filter on so the bot fully self-manages from win-rate history + balance.
+    "auto_pilot": "0",
+    # Global risk limits managed automatically (max concurrent scales w/ balance).
+    "global_auto_risk": "0",
     "selected_pairs": "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,LINKUSDT,AVAXUSDT,DOGEUSDT,ADAUSDT,LTCUSDT,DOTUSDT,ATOMUSDT",
 
     # Scalping engine

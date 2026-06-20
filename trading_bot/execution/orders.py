@@ -19,7 +19,7 @@ def _sizing(symbol, strategy, signal, equity, multiplier, api_mode):
     Compute effective leverage/risk and the order quantity. Returns a dict with
     sizing details or {"blocked": reason}.
     """
-    auto_risk = db.get_bool(f"{strategy}_auto_risk", True)
+    auto_risk = db.auto_flag(f"{strategy}_auto_risk", True)
 
     if auto_risk:
         # Fully automatic: base sized from balance + win-rate history, then
@@ -128,8 +128,8 @@ def execute_order(symbol, strategy, signal, *, equity, multiplier, api_mode,
     fees_estimated = entry * qty * TAKER_FEE * 2  # round trip estimate
 
     # Partial TP only applies in Auto TP/SL mode; manual mode is a single target.
-    partial_tp = db.get_bool(f"{strategy}_partial_tp", True) and db.get_bool(f"{strategy}_auto_tpsl", True)
-    trail_auto = 1 if db.get_bool(f"{strategy}_trail_auto", False) else 0
+    partial_tp = db.get_bool(f"{strategy}_partial_tp", True) and db.auto_flag(f"{strategy}_auto_tpsl", True)
+    trail_auto = 1 if db.auto_flag(f"{strategy}_trail_auto", False) else 0
     tf = db.get_setting(f"{strategy}_timeframe", "5m")
     atr_at_entry = float(signal.get("atr", 0.0)) if signal.get("atr") else 0.0
 

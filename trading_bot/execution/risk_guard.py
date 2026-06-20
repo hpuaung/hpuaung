@@ -168,8 +168,27 @@ def apply_session_filter(strategy):
 # ---------------------------------------------------------------------------
 # Concurrency guard
 # ---------------------------------------------------------------------------
-def apply_concurrency_guard():
-    max_trades = db.get_int("max_concurrent_trades", 5)
+def recommended_max_concurrent(equity):
+    """Auto cap on simultaneous open trades, scaled to account size so a small
+    balance is not spread across too many positions."""
+    if equity <= 0:
+        return 2
+    if equity < 100:
+        return 2
+    if equity < 1000:
+        return 4
+    if equity < 10000:
+        return 6
+    return 8
+
+
+def apply_concurrency_guard(equity=None):
+    # Auto Pilot / Global Auto Risk → cap scales with balance; else manual slider.
+    if equity is not None and (db.get_bool("auto_pilot", False)
+                               or db.get_bool("global_auto_risk", False)):
+        max_trades = recommended_max_concurrent(equity)
+    else:
+        max_trades = db.get_int("max_concurrent_trades", 5)
     if db.count_open_positions() >= max_trades:
         return False, f"Max concurrent trades {max_trades} reached"
     return True, ""

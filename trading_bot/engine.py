@@ -34,7 +34,7 @@ _last_status = {"ts": 0.0}
 def _effective_tfs(strategy):
     """Return (entry, confirm, trend) timeframes. When Auto Timeframe is on the
     bot uses sensible presets so the user never has to tune them."""
-    if db.get_bool(f"{strategy}_auto_tf", True):
+    if db.auto_flag(f"{strategy}_auto_tf", True):
         if strategy == "scalping":
             return "5m", "15m", "1h"
         return "4h", "1d", "3d"
@@ -87,7 +87,7 @@ def aggregate_signal(symbol, strategy, df_entry, df_confirm, df_trend,
                                    ("Breakout", brk_res)]
             if res and res["signal"] != "NONE"
         )
-        if db.get_bool(f"{strategy}_auto_threshold", True):
+        if db.auto_flag(f"{strategy}_auto_threshold", True):
             ai_threshold = risk_guard.recommended_threshold(strategy)
         else:
             ai_threshold = db.get_float(f"{strategy}_ai_threshold", 0.75)
@@ -222,7 +222,7 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
         risk_guard.apply_blackout_guard(),
         risk_guard.apply_correlation_guard(signal["signal"], strategy),
         risk_guard.apply_session_filter(strategy),
-        risk_guard.apply_concurrency_guard(),
+        risk_guard.apply_concurrency_guard(equity),
     ]
     for ok, reason in guards:
         if not ok:
@@ -246,7 +246,7 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
 
     # Manual TP/SL override: when Auto TP/SL is off, use the single TP%/SL%
     # sliders (one target) instead of the strategy's structure/ATR levels.
-    if not db.get_bool(f"{strategy}_auto_tpsl", True):
+    if not db.auto_flag(f"{strategy}_auto_tpsl", True):
         entry = float(signal["entry"])
         tp_pct = db.get_float(f"{strategy}_tp_pct", 1.5)
         sl_pct = db.get_float(f"{strategy}_sl_pct", 0.8)
@@ -267,7 +267,7 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
     # filter below still governs whether the resulting trade is worth taking.
     # Tunable via atr_sl_enabled / atr_sl_mult (Settings or getset).
     # -----------------------------------------------------------------------
-    if db.get_bool(f"{strategy}_auto_tpsl", True) and db.get_bool("atr_sl_enabled", True):
+    if db.auto_flag(f"{strategy}_auto_tpsl", True) and db.get_bool("atr_sl_enabled", True):
         _atr = float(signal.get("atr") or 0.0)
         _entry = float(signal["entry"])
         if _atr > 0 and _entry > 0:
@@ -335,7 +335,7 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
 
     # 2. Direction-specific win rate: if e.g. SELL on SOLUSDT has lost 10/10
     #    times, stop entering that direction on this pair until history improves.
-    if db.get_bool(f"{strategy}_dir_filter", True):
+    if db.auto_flag(f"{strategy}_dir_filter", True):
         wr_dir, n_dir = db.winrate(strategy, symbol,
                                    side=signal["signal"], paper_mode=_lpm)
         if n_dir >= 10 and wr_dir is not None and wr_dir < 35.0:
@@ -346,7 +346,7 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
 
     # 3. Hour-of-day win rate: if this UTC hour has historically lost across
     #    10+ real trades for this strategy, wait for a better hour.
-    if db.get_bool(f"{strategy}_hour_filter", True):
+    if db.auto_flag(f"{strategy}_hour_filter", True):
         cur_hour = datetime.now(timezone.utc).hour
         wr_hour, n_hour = db.winrate_hour(cur_hour, strategy=strategy, paper_mode=_lpm)
         if n_hour >= 10 and wr_hour is not None and wr_hour < 35.0:
@@ -357,7 +357,7 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
 
     # 4. Session × pair win rate: e.g. ETHUSDT is consistently losing during
     #    the Asian session — skip that combination specifically.
-    if db.get_bool(f"{strategy}_session_pair_filter", True):
+    if db.auto_flag(f"{strategy}_session_pair_filter", True):
         cur_session = _current_session()
         wr_sess, n_sess = db.winrate_session_pair(cur_session, symbol, strategy=strategy, paper_mode=_lpm)
         if n_sess >= 8 and wr_sess is not None and wr_sess < 35.0:
@@ -378,7 +378,7 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
     from models.train import get_win_model
     wm = get_win_model()
     _win_samples = db.get_int("win_model_samples", 0)
-    if wm is not None and _win_samples >= 50 and db.get_bool(f"{strategy}_win_filter", True):
+    if wm is not None and _win_samples >= 50 and db.auto_flag(f"{strategy}_win_filter", True):
         try:
             win_prob = float(wm.predict_proba([entry_features])[0][1])
             min_wp = db.get_float("win_filter_min", 0.45)

@@ -193,7 +193,7 @@ def process_position(pos, notifier=None):
 
     entry = float(pos["entry_price"])
     partial = db.get_bool(f"{strat}_partial_tp", True)
-    auto_be = db.get_bool(f"{strat}_auto_be", True)
+    auto_be = db.auto_flag(f"{strat}_auto_be", True)
 
     # --- Partial take profits ---
     if partial:
@@ -246,7 +246,7 @@ def process_position(pos, notifier=None):
     if pos.get("trailing_active"):
         # Auto TP/SL mode → trailing distance adapts to volatility (ATR at
         # entry); manual mode → use the user's distance slider.
-        if db.get_bool(f"{strat}_auto_tpsl", True):
+        if db.auto_flag(f"{strat}_auto_tpsl", True):
             atr = float(pos.get("atr_at_entry") or 0.0)
             trail_pct = max(0.3, atr / entry * 100.0) if (atr > 0 and entry > 0) \
                 else db.get_float(f"{strat}_trail_pct", 1.5)
@@ -281,7 +281,7 @@ def process_position(pos, notifier=None):
 
     # --- Max hold days (swing only) ---
     if strat == "swing":
-        max_days = 7 if db.get_bool("swing_auto_maxhold", True) else db.get_int("swing_max_hold_days", 7)
+        max_days = 7 if db.auto_flag("swing_auto_maxhold", True) else db.get_int("swing_max_hold_days", 7)
         hours, _ = _hold_duration(pos)
         if hours >= max_days * 24:
             _close_full(pos, price, "MaxDays", api_mode, notifier)

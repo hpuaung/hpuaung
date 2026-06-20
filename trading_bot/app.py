@@ -822,6 +822,19 @@ def _place_test_trade(strategy):
 def tab_settings():
     st.subheader("⚙️ Settings")
 
+    # --- Master Auto Pilot -------------------------------------------------
+    ap = bool_toggle("🤖 AUTO PILOT — bot manages everything", "auto_pilot", False)
+    if ap:
+        st.success("🤖 **Auto Pilot ON** — the bot self-manages timeframe, AI "
+                   "threshold, risk sizing (from balance + win-rate), ATR TP/SL, "
+                   "trailing, break-even, max-hold, global risk caps and every "
+                   "adaptive win-rate filter. Individual toggles below are ignored "
+                   "while this is on. Turn it off to tune things manually.")
+    else:
+        st.caption("Off → each section's own Auto/Manual toggles apply. Turn on to "
+                   "let the bot run fully hands-off.")
+    st.divider()
+
     with st.expander("🔌 1. API Configuration", expanded=False):
         st.markdown("**🧪 Testnet**")
         text("Testnet API Key", "binance_testnet_api", password=True, show_saved=True)
@@ -915,12 +928,20 @@ def tab_settings():
         st.caption("Labels: BUY=2 (>+1% in 3 candles), HOLD=1, SELL=0 (<-1%)")
 
     with st.expander("🚦 4. Global Risk Limits", expanded=False):
+        g_auto = db.get_bool("auto_pilot", False) or bool_toggle(
+            "🤖 Auto Global Risk (bot-managed limits)", "global_auto_risk", False)
+        if g_auto:
+            st.caption("🤖 Auto → Max Concurrent Trades scales with balance "
+                       "(<$100→2, <$1k→4, <$10k→6, else 8). Other limits below stay "
+                       "as safe guard rails. Turn off Auto Pilot / this toggle to set "
+                       "Max Concurrent manually.")
         slider("Daily Loss Limit %", "daily_loss_limit_pct", 1.0, 20.0, 0.5,
                db.get_float("daily_loss_limit_pct", 10.0))
         slider("Max Drawdown Pause %", "max_drawdown_pause_pct", 10.0, 50.0, 1.0,
                db.get_float("max_drawdown_pause_pct", 25.0))
-        slider("Max Concurrent Trades", "max_concurrent_trades", 1, 10, 1,
-               db.get_int("max_concurrent_trades", 5), is_int=True)
+        if not g_auto:
+            slider("Max Concurrent Trades", "max_concurrent_trades", 1, 10, 1,
+                   db.get_int("max_concurrent_trades", 5), is_int=True)
         slider("Lev×Risk Hard Cap %", "lev_risk_hard_cap_pct", 5.0, 20.0, 0.5,
                db.get_float("lev_risk_hard_cap_pct", 10.0))
         slider("Min Risk:Reward Ratio", "min_rr_ratio", 1.0, 3.0, 0.1,
