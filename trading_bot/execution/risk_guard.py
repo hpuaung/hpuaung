@@ -182,6 +182,24 @@ def recommended_max_concurrent(equity):
     return 8
 
 
+def recommended_min_rr(strategy=None):
+    """Min risk:reward adapted from win-rate history: demand a higher reward
+    when losing (be pickier), allow a lower one when winning (take more)."""
+    wr, n = db.winrate(strategy)
+    if n < 15 or wr is None:
+        return 2.0  # default while learning
+    if wr < 45:
+        return 2.5  # losing: only the best setups
+    if wr < 55:
+        return 2.0  # break-even
+    return 1.8      # winning: a touch more permissive
+
+
+def global_auto_on():
+    """Global risk limits managed by the bot (master Auto Pilot or its own toggle)."""
+    return db.get_bool("auto_pilot", False) or db.get_bool("global_auto_risk", False)
+
+
 def apply_concurrency_guard(equity=None):
     # Auto Pilot / Global Auto Risk → cap scales with balance; else manual slider.
     if equity is not None and (db.get_bool("auto_pilot", False)

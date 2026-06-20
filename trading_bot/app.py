@@ -931,10 +931,10 @@ def tab_settings():
         g_auto = db.get_bool("auto_pilot", False) or bool_toggle(
             "🤖 Auto Global Risk (bot-managed limits)", "global_auto_risk", False)
         if g_auto:
-            st.caption("🤖 Auto → Max Concurrent Trades scales with balance "
-                       "(<$100→2, <$1k→4, <$10k→6, else 8). Other limits below stay "
-                       "as safe guard rails. Turn off Auto Pilot / this toggle to set "
-                       "Max Concurrent manually.")
+            st.caption("🤖 Auto → Max Concurrent scales with balance "
+                       "(<$100→2, <$1k→4, <$10k→6, else 8); Min R:R adapts to "
+                       "win-rate (losing→2.5, even→2.0, winning→1.8); Min TP "
+                       "floor 0.4%. Other limits below stay as safe guard rails.")
         slider("Daily Loss Limit %", "daily_loss_limit_pct", 1.0, 20.0, 0.5,
                db.get_float("daily_loss_limit_pct", 10.0))
         slider("Max Drawdown Pause %", "max_drawdown_pause_pct", 10.0, 50.0, 1.0,
@@ -944,15 +944,16 @@ def tab_settings():
                    db.get_int("max_concurrent_trades", 5), is_int=True)
         slider("Lev×Risk Hard Cap %", "lev_risk_hard_cap_pct", 5.0, 20.0, 0.5,
                db.get_float("lev_risk_hard_cap_pct", 10.0))
-        slider("Min Risk:Reward Ratio", "min_rr_ratio", 1.0, 3.0, 0.1,
-               db.get_float("min_rr_ratio", 2.0))
-        st.caption("Skip entries where TP1 distance < this × SL distance. "
-                   "2.0 = TP must be 2× further than SL. Fixes inverted R:R.")
-        slider("Min TP Distance % (fee floor)", "min_tp_pct", 0.0, 2.0, 0.05,
-               db.get_float("min_tp_pct", 0.4))
-        st.caption("Skip entries whose TP1 target is closer than this %. "
-                   "Round-trip fee+slippage ≈ 0.13%, so a 0.4% floor keeps "
-                   "wins well above costs and filters fee-eaten micro-scalps.")
+        if not g_auto:
+            slider("Min Risk:Reward Ratio", "min_rr_ratio", 1.0, 3.0, 0.1,
+                   db.get_float("min_rr_ratio", 2.0))
+            st.caption("Skip entries where TP1 distance < this × SL distance. "
+                       "2.0 = TP must be 2× further than SL. Fixes inverted R:R.")
+            slider("Min TP Distance % (fee floor)", "min_tp_pct", 0.0, 2.0, 0.05,
+                   db.get_float("min_tp_pct", 0.4))
+            st.caption("Skip entries whose TP1 target is closer than this %. "
+                       "Round-trip fee+slippage ≈ 0.13%, so a 0.4% floor keeps "
+                       "wins well above costs and filters fee-eaten micro-scalps.")
         bool_toggle("ATR-based Stop Loss (Auto mode)", "atr_sl_enabled", True)
         slider("ATR SL Multiplier", "atr_sl_mult", 0.5, 4.0, 0.1,
                db.get_float("atr_sl_mult", 1.5))

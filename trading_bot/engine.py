@@ -281,7 +281,8 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
     # Risk:Reward filter — skip entries where potential loss > potential gain.
     # Trades with inverted R:R drag down PnL even at 50%+ win rates.
     # -----------------------------------------------------------------------
-    _min_rr = db.get_float("min_rr_ratio", 1.5)
+    _min_rr = (risk_guard.recommended_min_rr(strategy) if risk_guard.global_auto_on()
+               else db.get_float("min_rr_ratio", 2.0))
     try:
         _sl_dist = abs(float(signal["entry"]) - float(signal["sl"]))
         _tp_dist = abs(float(signal["tp1"]) - float(signal["entry"]))
@@ -301,7 +302,7 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
     # Requiring TP1 to be at least `min_tp_pct` away keeps wins meaningfully
     # larger than costs. Applies in both Auto and Manual TP/SL modes.
     # -----------------------------------------------------------------------
-    _min_tp_pct = db.get_float("min_tp_pct", 0.4)
+    _min_tp_pct = 0.4 if risk_guard.global_auto_on() else db.get_float("min_tp_pct", 0.4)
     try:
         _entry = float(signal["entry"])
         _tp_pct_dist = abs(float(signal["tp1"]) - _entry) / max(_entry, 1e-9) * 100.0
