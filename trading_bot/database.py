@@ -664,7 +664,7 @@ DEFAULTS = {
     "min_tp_pct": "0.4",
     "learn_from_paper": "1",
     "atr_sl_enabled": "1",
-    "atr_sl_mult": "1.5",
+    "atr_sl_mult": "2.5",
     # Master Auto Pilot: one switch forces every per-engine auto + adaptive
     # filter on so the bot fully self-manages from win-rate history + balance.
     "auto_pilot": "0",
