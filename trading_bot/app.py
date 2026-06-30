@@ -970,6 +970,14 @@ def tab_settings():
                 st.rerun()
 
     with st.expander("🤖 3. LightGBM Model", expanded=False):
+        ai_on = bool_toggle("🧠 Use AI/LightGBM model in entries", "ai_model_on", True)
+        if ai_on:
+            st.caption("ON → the model nudges entry signals. ⚠️ Live data showed it "
+                       "was anti-predictive (losers had higher AI confidence). "
+                       "Turn OFF to trade on pure technical signals (model-free).")
+        else:
+            st.success("🧠 AI model OFF — entries use pure technical/structure/volume "
+                       "signals only. No LightGBM influence. (Recommended given the data.)")
         select("Retrain Schedule", "lgbm_retrain_schedule", ["daily", "weekly", "manual"],
                db.get_setting("lgbm_retrain_schedule", "weekly"))
         select("Training Period", "lgbm_train_period", ["1m", "3m", "6m", "1y"],

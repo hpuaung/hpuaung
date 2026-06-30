@@ -668,6 +668,8 @@ DEFAULTS = {
     # Master Auto Pilot: one switch forces every per-engine auto + adaptive
     # filter on so the bot fully self-manages from win-rate history + balance.
     "auto_pilot": "0",
+    # LightGBM direction model influence on entries (off = pure technical signals).
+    "ai_model_on": "1",
     # Global risk limits managed automatically (max concurrent scales w/ balance).
     "global_auto_risk": "0",
     "selected_pairs": "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,LINKUSDT,AVAXUSDT,DOGEUSDT,ADAUSDT,LTCUSDT,DOTUSDT,ATOMUSDT",

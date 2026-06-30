@@ -95,6 +95,7 @@ def aggregate_signal(symbol, strategy, df_entry, df_confirm, df_trend,
             df_entry, trend_res, rev_res, brk_res,
             funding_rate=funding_rate, oi_change_pct=oi_change,
             news_score=news_score, ai_threshold=ai_threshold,
+            use_model=db.get_bool("ai_model_on", True),
         )
         return final, (triggered or "AI"), float(final.get("lgbm_score", 0.0))
 
