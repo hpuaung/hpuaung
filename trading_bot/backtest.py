@@ -160,10 +160,11 @@ def _report(name, trades):
 
 CONFIGS = [
     ("baseline", {}),
-    ("+confirm", {"confirm": True}),
-    ("+adx>25", {"adx": 25}),
-    ("+volume1.2x", {"vol": 1.2}),
-    ("+ALL", {"confirm": True, "adx": 25, "vol": 1.2}),
+    ("+vol1.2x", {"vol": 1.2}),
+    ("+vol1.5x", {"vol": 1.5}),
+    ("+vol2.0x", {"vol": 2.0}),
+    ("+vol2.5x", {"vol": 2.5}),
+    ("+vol2+confirm", {"vol": 2.0, "confirm": True}),
 ]
 
 print("=" * 70)
