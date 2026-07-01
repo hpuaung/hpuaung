@@ -68,9 +68,12 @@ CONFIG = {
     "auto_pilot": "0",
     "global_auto_risk": "0",
 
-    # 20 pairs -> daily breakouts cluster in market-wide moves, so allow more
-    # concurrent positions (each still risks a fixed % via SL-aware sizing).
-    "max_concurrent_trades": "8",
+    # allow all 20 pairs to hold a position at once. The backtest took EVERY
+    # signal (no concurrency cap), and daily breakouts cluster on market-wide
+    # days, so capping lower would skip signals and under-reproduce the edge on
+    # paper. Each trade still risks a fixed % via SL-aware sizing.
+    # (For REAL money later, consider lowering to ~10 to limit correlated risk.)
+    "max_concurrent_trades": "20",
 
     # trade only the winning pairs
     "selected_pairs": PAIRS,
