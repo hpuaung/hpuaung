@@ -15,23 +15,29 @@ sweep**, the verdict has TWO parts. Short-timeframe direction prediction has NO
 edge — but a **timeframe sweep found ONE real, broad edge: breakout on the DAILY
 (1d) chart.** That is now what the bot trades on paper.
 
-### ✅ The edge we found — breakout on 1d (deployed, paper)
-- `strategy_backtest.py all 1d 1500` over **~4 years**: breakout alone posts
-  **PF 1.68, expectancy +0.187R, ~72% win**, and it is **broad — positive on 5 of
-  7 pairs**, not one lucky pair. This clears the deploy bar (expectancy > 0 AND
-  PF > 1.3) by a wide margin and on a long sample.
-- Why it works where scalping doesn't: a daily-close breakout of a multi-day
-  consolidation is a *structural* event (real supply/demand shift), not 5m noise.
-  Fees are trivial vs the move size, and there are only **~26 trades/year** — this
-  is patient SWING trading, not scalping. Expect **days-to-weeks between entries**;
-  `... swing -> NONE` on most bars is NORMAL, not a bug.
-- **Live config (set via getset.py, paper):** `swing_bot_on=1 scalping_bot_on=0
-  swing_mode=paper swing_timeframe=1d swing_auto_tf=0 swing_breakout_on=1`
-  (trend/reversion/hybrid OFF) `swing_auto_tpsl=1 swing_partial_tp=1
-  atr_sl_enabled=0 min_rr_ratio=0.3 min_tp_pct=0.0 ai_model_on=0` + all swing
-  filters (session/mtf/win/dir/hour/session_pair/min_lgbm) OFF so the raw breakout
-  edge isn't filtered away. `min_rr_ratio` MUST be low (0.3) — breakout's native
-  SL sits at the broken level (tight), so a high min_rr would block every entry.
+### ✅ The edge we found — breakout on 1d, on selected pairs (deployed, paper)
+- **Full timeframe sweep** (`strategy_backtest.py all 5m,15m,30m,1h,4h,1d` on a
+  DEEP sample via `get_ohlcv_deep`): the **only 🟢** is breakout on **1d**
+  (aggregate **+0.120R, PF 1.40, 70% win, n=147** over ~6.5yr). Every strategy on
+  5m/15m/30m/1h is negative; trend at 4h/1d is only marginally positive (PF ~1.14)
+  and −0.42R at 1h — not a real edge, so it stays OFF.
+- **Per-pair pruning** (`strategy_backtest.py <12 pairs> 1d 3000 detail
+  only=breakout`) — keep only pairs that are 🟢 on their own:
+  - **BTC PF 3.14 (+0.49R) · AVAX 2.88 (+0.64R) · XRP 2.13 (+0.38R) ·
+    SOL 1.87 (+0.17R) · LTC 1.79 (+0.17R)** → KEEP.
+  - ETH/BNB/LINK(−0.45R)/MATIC/ATOM/DOGE/ADA → negative-to-noise → DROPPED.
+  - Kept-5 aggregate ≈ **+0.35R/trade** (~4× the all-12 average). NOTE: pair
+    selection is in-sample, so live will be somewhat lower — but daily breakout is
+    a *structural* event (real supply/demand shift), not a fitted pattern.
+- Why it works where scalping doesn't: fees are trivial vs a daily breakout move;
+  only **~4 trades/pair/year** (~20–30/yr across 5 pairs) — patient SWING, not
+  scalping. **Days-to-weeks between entries is NORMAL**; `swing -> NONE` most bars
+  is expected, not a bug.
+- **Deploy in one shot:** `.venv/bin/python configure_bot.py` (swing/1d/breakout-
+  only, `selected_pairs=BTCUSDT,SOLUSDT,XRPUSDT,AVAXUSDT,LTCUSDT`, all filters +
+  AI model OFF, `min_rr_ratio=0.3`). `min_rr` MUST be low — breakout's native SL
+  sits at the broken level (tight), so a high min_rr blocks every entry. Restart
+  `futures-engine` after running it.
 
 ### ❌ What has NO edge (do not revive these on real money)
 - Live paper scalping: ~17–29% win rate, net **negative** (~$100 → $92).
@@ -107,12 +113,13 @@ Apply-once forms in Global Risk (reduce dashboard reruns).
   long runs over flaky SSH: `nohup ... > /tmp/x.txt 2>&1 & echo STARTED` then `cat`.
 
 ## If you (or anyone) want to keep going — the honest paths
-1. **Validate the 1d breakout on paper (current path).** The bot is configured
-   for it now. Let it run on paper for a real sample (weeks/months — 1d is slow)
-   and compare live PF to the backtested 1.68. Keep it paper until it proves out.
-2. **Harden the 1d breakout before real money:** widen the backtest to more pairs
-   (BTC/ETH/BNB/DOGE/ADA/DOT) and out-of-sample date ranges; confirm the edge
-   isn't a 5/7-pair artifact. Only then consider tiny real size.
+1. **Validate the 1d breakout on paper (current path).** The bot runs
+   `configure_bot.py`'s config now (breakout-1d on BTC/SOL/XRP/AVAX/LTC). Let it
+   run on paper for a real sample (weeks/months — 1d is slow) and compare live PF
+   to the backtested ~1.4–2+. Keep it paper until it proves out.
+2. **Harden before real money:** the kept-5 pairs are in-sample; re-check the edge
+   on out-of-sample date ranges (walk-forward) and confirm it isn't over-fit. Only
+   then consider tiny real size.
 3. **Structural edges** (NOT direction prediction): cross-exchange arbitrage,
    funding-rate farming, market-making. Different build; real but competitive.
 4. Any OTHER new idea MUST clear `strategy_backtest.py` (sweep to 1d) with
