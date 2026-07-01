@@ -36,10 +36,24 @@ edge — but a **timeframe sweep found ONE real, broad edge: breakout on the DAI
   scalping. **Days-to-weeks between entries is NORMAL**; `swing -> NONE` most bars
   is expected, not a bug.
 - **Deploy in one shot:** `.venv/bin/python configure_bot.py` (swing/1d/breakout-
-  only, `selected_pairs=BTCUSDT,SOLUSDT,XRPUSDT,AVAXUSDT,LTCUSDT`, all filters +
-  AI model OFF, `min_rr_ratio=0.3`). `min_rr` MUST be low — breakout's native SL
-  sits at the broken level (tight), so a high min_rr blocks every entry. Restart
-  `futures-engine` after running it.
+  only, the 20 pairs above, all filters + AI model OFF, `min_rr_ratio=0.3`).
+  `min_rr` MUST be low — breakout's native SL sits at the broken level (tight), so
+  a high min_rr blocks every entry. Restart `futures-engine` after running it.
+- **Settings that must match the backtest** (all in `configure_bot.py`, some were
+  wrong by default and would silently break the basket):
+  - `swing_corr_filter=0` — default(max 2 same-dir) would block ~18/20 on a
+    market-wide breakout day.
+  - `swing_auto_maxhold=0`, `swing_max_hold_days=30` — default force-closed at 7d,
+    cutting winners (backtest held ~200d).
+  - `swing_trail_auto=0` — backtest exited on SL/TP1 only; trailing deviates.
+  - `max_concurrent_trades=20` — backtest took every signal (lower for real money).
+- **Confirmed live (2026-07):** the engine took its first real 1d breakout on
+  paper (XLMUSDT BUY) — the deployed system genuinely trades. Full per-setting
+  review + dashboard guide is in **`AUDIT.md`**. Dashboard UI was decluttered
+  (removed News/Session/Funding/LightGBM/Blackout/PerfOptimizer/AI-Learning
+  sections) and LightGBM is no longer loaded into RAM when `ai_model_on=0`.
+- **Dashboard: NEVER turn ON** Auto Pilot, Auto Timeframe (leaves 1d → 4h loses),
+  AI Hybrid/model, or Correlation Filter — each breaks the proven config.
 
 ### ❌ What has NO edge (do not revive these on real money)
 - Live paper scalping: ~17–29% win rate, net **negative** (~$100 → $92).
