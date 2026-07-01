@@ -25,6 +25,11 @@ pairs_arg = _a[0] if len(_a) > 0 else "all"
 # interval can be a comma list to sweep timeframes, e.g. 5m,15m,30m,1h,4h,1d
 INTERVALS = [x.strip() for x in (_a[1] if len(_a) > 1 else "1h").split(",") if x.strip()]
 LIMIT = int(_a[2]) if len(_a) > 2 else 1500
+DETAIL = "detail" in _a          # per-pair breakdown
+ONLY = None                      # restrict to one strategy, e.g. only=breakout
+for _x in _a:
+    if _x.startswith("only="):
+        ONLY = _x.split("=", 1)[1]
 
 if pairs_arg == "all":
     PAIRS = [p.strip() for p in db.get_setting(
@@ -100,8 +105,24 @@ def run_pair(df):
     return trades
 
 
+def _line(label, t):
+    if not t:
+        print(f"{label:12}{'0':>6}   no trades")
+        return
+    w = [x for x in t if x > 0]
+    aw = sum(w) / len(w) if w else 0
+    al = sum(x for x in t if x <= 0) / max(len(t) - len(w), 1)
+    gW = sum(w); gL = -sum(x for x in t if x <= 0)
+    pf = gW / gL if gL > 0 else float("inf")
+    edge = " 🟢" if (sum(t) / len(t) > 0 and pf > 1.3) else ""
+    print(f"{label:12}{len(t):>6}{100*len(w)//len(t):>6}{aw:>+9.2f}{al:>+10.2f}"
+          f"{sum(t)/len(t):>+8.3f}{pf:>7.2f}{edge}")
+
+
 def run_interval(interval):
-    agg = {s: [] for s in STRATS}
+    strats = [ONLY] if ONLY else STRATS
+    agg = {s: [] for s in strats}
+    per_pair = {s: {} for s in strats}
     for sym in PAIRS:
         try:
             df = bc.get_ohlcv(sym, interval, LIMIT, api_mode="real")
@@ -109,25 +130,19 @@ def run_interval(interval):
                 continue
             df = ind.compute_indicators(df)
             t = run_pair(df)
-            for s in STRATS:
+            for s in strats:
                 agg[s] += t[s]
+                per_pair[s][sym] = t[s]
         except Exception:  # noqa: BLE001
             continue
     print(f"\n==== interval={interval}  candles={LIMIT} ====")
-    print(f"{'strategy':11}{'n':>6}{'win%':>6}{'avgWinR':>9}{'avgLossR':>10}{'expR':>8}{'PF':>7}")
-    for s in STRATS:
-        t = agg[s]
-        if not t:
-            print(f"{s:11}{'0':>6}   no trades")
-            continue
-        w = [x for x in t if x > 0]
-        aw = sum(w) / len(w) if w else 0
-        al = sum(x for x in t if x <= 0) / max(len(t) - len(w), 1)
-        gW = sum(w); gL = -sum(x for x in t if x <= 0)
-        pf = gW / gL if gL > 0 else float("inf")
-        edge = " 🟢" if (sum(t) / len(t) > 0 and pf > 1.3) else ""
-        print(f"{s:11}{len(t):>6}{100*len(w)//len(t):>6}{aw:>+9.2f}{al:>+10.2f}"
-              f"{sum(t)/len(t):>+8.3f}{pf:>7.2f}{edge}")
+    print(f"{'strategy':12}{'n':>6}{'win%':>6}{'avgWinR':>9}{'avgLossR':>10}{'expR':>8}{'PF':>7}")
+    for s in strats:
+        _line(s, agg[s])
+        if DETAIL:
+            for sym in PAIRS:
+                if per_pair[s].get(sym):
+                    _line("  " + sym, per_pair[s][sym])
 
 
 print("=" * 70)
