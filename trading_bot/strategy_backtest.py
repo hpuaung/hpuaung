@@ -22,7 +22,8 @@ from strategies import trend, reversion, breakout, ai_hybrid
 db.init_db()
 _a = sys.argv[1:]
 pairs_arg = _a[0] if len(_a) > 0 else "all"
-INTERVAL = _a[1] if len(_a) > 1 else "1h"
+# interval can be a comma list to sweep timeframes, e.g. 5m,15m,30m,1h,4h,1d
+INTERVALS = [x.strip() for x in (_a[1] if len(_a) > 1 else "1h").split(",") if x.strip()]
 LIMIT = int(_a[2]) if len(_a) > 2 else 1500
 
 if pairs_arg == "all":
@@ -99,41 +100,41 @@ def run_pair(df):
     return trades
 
 
-print("=" * 68)
-print(f"STRATEGY BACKTEST (each strategy alone)  interval={INTERVAL} candles={LIMIT}")
-print("exits use each strategy's own SL / TP1.  model OFF in hybrid.")
-print("=" * 68)
-
-agg = {s: [] for s in STRATS}
-for sym in PAIRS:
-    try:
-        df = bc.get_ohlcv(sym, INTERVAL, LIMIT, api_mode="real")
-        if df is None or len(df) < WARMUP + 30:
-            print(f"  {sym}: not enough data")
+def run_interval(interval):
+    agg = {s: [] for s in STRATS}
+    for sym in PAIRS:
+        try:
+            df = bc.get_ohlcv(sym, interval, LIMIT, api_mode="real")
+            if df is None or len(df) < WARMUP + 30:
+                continue
+            df = ind.compute_indicators(df)
+            t = run_pair(df)
+            for s in STRATS:
+                agg[s] += t[s]
+        except Exception:  # noqa: BLE001
             continue
-        df = ind.compute_indicators(df)
-        t = run_pair(df)
-        for s in STRATS:
-            agg[s] += t[s]
-        print(f"  {sym} done "
-              + " ".join(f"{s[:4]}={len(t[s])}" for s in STRATS))
-    except Exception as e:  # noqa: BLE001
-        print(f"  {sym}: ERROR {e}")
+    print(f"\n==== interval={interval}  candles={LIMIT} ====")
+    print(f"{'strategy':11}{'n':>6}{'win%':>6}{'avgWinR':>9}{'avgLossR':>10}{'expR':>8}{'PF':>7}")
+    for s in STRATS:
+        t = agg[s]
+        if not t:
+            print(f"{s:11}{'0':>6}   no trades")
+            continue
+        w = [x for x in t if x > 0]
+        aw = sum(w) / len(w) if w else 0
+        al = sum(x for x in t if x <= 0) / max(len(t) - len(w), 1)
+        gW = sum(w); gL = -sum(x for x in t if x <= 0)
+        pf = gW / gL if gL > 0 else float("inf")
+        edge = " 🟢" if (sum(t) / len(t) > 0 and pf > 1.3) else ""
+        print(f"{s:11}{len(t):>6}{100*len(w)//len(t):>6}{aw:>+9.2f}{al:>+10.2f}"
+              f"{sum(t)/len(t):>+8.3f}{pf:>7.2f}{edge}")
 
-print("-" * 68)
-print(f"{'strategy':11}{'n':>5}{'win%':>6}{'avgWinR':>9}{'avgLossR':>10}{'expR':>8}{'PF':>7}")
-for s in STRATS:
-    t = agg[s]
-    if not t:
-        print(f"{s:11}{'0':>5}   no trades")
-        continue
-    w = [x for x in t if x > 0]
-    aw = sum(w) / len(w) if w else 0
-    al = sum(x for x in t if x <= 0) / max(len(t) - len(w), 1)
-    gW = sum(w); gL = -sum(x for x in t if x <= 0)
-    pf = gW / gL if gL > 0 else float("inf")
-    print(f"{s:11}{len(t):>5}{100*len(w)//len(t):>6}{aw:>+9.2f}{al:>+10.2f}"
-          f"{sum(t)/len(t):>+8.3f}{pf:>7.2f}")
-print("-" * 68)
-print("🟢 expectancy(expR) > 0 AND PF > 1.3  -> that strategy has edge here.")
-print("🔴 all expR <= 0 -> none of the four beat costs on these pairs/period.")
+
+print("=" * 70)
+print(f"STRATEGY BACKTEST (each strategy alone)  timeframes={','.join(INTERVALS)}")
+print("exits use each strategy's own SL / TP1.  model OFF in hybrid.")
+print("=" * 70)
+for _iv in INTERVALS:
+    run_interval(_iv)
+print("-" * 70)
+print("🟢 = expectancy > 0 AND PF > 1.3 (real edge).  Look for it across timeframes.")
