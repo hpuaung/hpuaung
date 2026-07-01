@@ -47,6 +47,12 @@ edge — but a **timeframe sweep found ONE real, broad edge: breakout on the DAI
     cutting winners (backtest held ~200d).
   - `swing_trail_auto=0` — backtest exited on SL/TP1 only; trailing deviates.
   - `max_concurrent_trades=20` — backtest took every signal (lower for real money).
+- **Walk-forward robustness PASSED** (`robust_backtest.py all 1d 3000 3 detail`):
+  splitting the 20-pair history into 3 chronological eras, **all three are 🟢** —
+  seg1 PF 2.04 (+0.258R), seg2 PF 2.20 (+0.351R), seg3 PF 2.44 (+0.357R), overall
+  PF 2.23 (+0.325R, n=463, 73% win). The edge holds across every era and is
+  STRONGEST in the newest — not an overfit to one bull run. (Pair selection is
+  still in-sample, but temporal stability within the basket is genuine evidence.)
 - **Confirmed live (2026-07):** the engine took its first real 1d breakout on
   paper (XLMUSDT BUY) — the deployed system genuinely trades. Full per-setting
   review + dashboard guide is in **`AUDIT.md`**. Dashboard UI was decluttered
