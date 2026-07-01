@@ -124,6 +124,54 @@ def _raw_klines(client, symbol, interval, limit):
     return client.futures_klines(symbol=symbol, interval=interval, limit=limit)
 
 
+@with_retry()
+@rate_limited(weight=5)
+def _raw_klines_page(client, symbol, interval, limit, end_time=None):
+    if end_time is None:
+        return client.futures_klines(symbol=symbol, interval=interval, limit=limit)
+    return client.futures_klines(
+        symbol=symbol, interval=interval, limit=limit, endTime=end_time)
+
+
+def get_ohlcv_deep(symbol, interval="5m", total=6000, api_mode="test") -> pd.DataFrame:
+    """Backtest-only: fetch up to `total` klines by paging backwards (Binance caps
+    each request at 1500). NOT used by the live bot — it only calls this from the
+    backtest scripts when a long history is needed to get a trustworthy sample on
+    low timeframes. Stops early when the exchange runs out of history."""
+    if total <= 1500:
+        return get_ohlcv(symbol, interval, total, api_mode)
+    client = get_client(api_mode)
+    rows = []
+    end_time = None
+    seen = set()
+    while len(rows) < total:
+        want = min(1500, total - len(rows))
+        page = _raw_klines_page(client, symbol, interval, want, end_time)
+        if not page:
+            break
+        # prepend older data; dedupe on open_time in case of boundary overlap
+        page = [r for r in page if int(r[0]) not in seen]
+        if not page:
+            break
+        for r in page:
+            seen.add(int(r[0]))
+        rows = page + rows
+        end_time = int(rows[0][0]) - 1
+        if len(page) < want:
+            break
+    df = pd.DataFrame(
+        rows,
+        columns=[
+            "open_time", "open", "high", "low", "close", "volume",
+            "close_time", "qav", "trades", "tbav", "tqav", "ignore",
+        ],
+    )
+    for col in ("open", "high", "low", "close", "volume"):
+        df[col] = df[col].astype("float32")
+    df["open_time"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
+    return df[["open_time", "open", "high", "low", "close", "volume"]]
+
+
 def get_ohlcv(symbol, interval="5m", limit=DEFAULT_KLINES, api_mode="test") -> pd.DataFrame:
     """
     Return an OHLCV DataFrame with a short TTL cache. Numeric columns use

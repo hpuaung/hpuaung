@@ -123,11 +123,13 @@ def run_interval(interval):
     strats = [ONLY] if ONLY else STRATS
     agg = {s: [] for s in strats}
     per_pair = {s: {} for s in strats}
+    got = 0
     for sym in PAIRS:
         try:
-            df = bc.get_ohlcv(sym, interval, LIMIT, api_mode="real")
+            df = bc.get_ohlcv_deep(sym, interval, LIMIT, api_mode="real")
             if df is None or len(df) < WARMUP + 30:
                 continue
+            got = max(got, len(df))
             df = ind.compute_indicators(df)
             t = run_pair(df)
             for s in strats:
@@ -135,7 +137,7 @@ def run_interval(interval):
                 per_pair[s][sym] = t[s]
         except Exception:  # noqa: BLE001
             continue
-    print(f"\n==== interval={interval}  candles={LIMIT} ====")
+    print(f"\n==== interval={interval}  candles/pair≈{got} (asked {LIMIT}) ====")
     print(f"{'strategy':12}{'n':>6}{'win%':>6}{'avgWinR':>9}{'avgLossR':>10}{'expR':>8}{'PF':>7}")
     for s in strats:
         _line(s, agg[s])

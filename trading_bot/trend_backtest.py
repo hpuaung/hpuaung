@@ -98,7 +98,7 @@ print("=" * 70)
 allt = []
 for sym in PAIRS:
     try:
-        df = bc.get_ohlcv(sym, INTERVAL, LIMIT, api_mode="real")
+        df = bc.get_ohlcv_deep(sym, INTERVAL, LIMIT, api_mode="real")
         if df is None or len(df) < WARMUP + 30:
             print(f"  {sym:9} not enough data")
             continue
