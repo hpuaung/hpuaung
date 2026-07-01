@@ -384,26 +384,17 @@ def tab_dashboard():
                "Change it in the ⚡ Scalping / 📈 Swing tab.")
 
     # Section 3 — Pair Selection (checkbox list + explicit Save)
-    # The first 20 are the breakout-1d 🟢 pairs (PF>1.3, n>=15 in backtest); the
-    # rest backtested negative and are kept only so they can be toggled/tested.
-    st.subheader("🎯 Pair Selection (Max 20)")
-    EDGE_PAIRS = ["BTCUSDT", "SOLUSDT", "XRPUSDT", "AVAXUSDT", "LTCUSDT",
-                  "DOTUSDT", "ETCUSDT", "XLMUSDT", "NEARUSDT", "FILUSDT",
-                  "AAVEUSDT", "ALGOUSDT", "VETUSDT", "HBARUSDT", "GRTUSDT",
-                  "SANDUSDT", "EOSUSDT", "THETAUSDT", "XTZUSDT", "CRVUSDT"]
-    OTHER_PAIRS = ["ETHUSDT", "BNBUSDT", "DOGEUSDT", "ADAUSDT", "LINKUSDT",
-                   "TRXUSDT", "ATOMUSDT", "UNIUSDT", "BCHUSDT", "APTUSDT",
-                   "ARBUSDT", "OPUSDT", "INJUSDT", "ICPUSDT", "SUIUSDT",
-                   "MANAUSDT", "AXSUSDT", "DYDXUSDT"]
-    all_pairs = EDGE_PAIRS + OTHER_PAIRS
+    # Only the 20 breakout-1d 🟢 pairs (PF>1.3, n>=15 in backtest) are offered.
+    st.subheader("🎯 Pair Selection (the 20 breakout-1d edge pairs)")
+    all_pairs = ["BTCUSDT", "SOLUSDT", "XRPUSDT", "AVAXUSDT", "LTCUSDT",
+                 "DOTUSDT", "ETCUSDT", "XLMUSDT", "NEARUSDT", "FILUSDT",
+                 "AAVEUSDT", "ALGOUSDT", "VETUSDT", "HBARUSDT", "GRTUSDT",
+                 "SANDUSDT", "EOSUSDT", "THETAUSDT", "XTZUSDT", "CRVUSDT"]
     selected = [p.strip() for p in db.get_setting("selected_pairs", "").split(",") if p.strip()]
-    st.caption("🟢 Top 20 = backtest edge (PF>1.3). Below the line = negative in "
-               "backtest (test-only).")
     grid = st.columns(2)
     checked = {}
     for i, p in enumerate(all_pairs):
-        label = ("🟢 " + p) if p in EDGE_PAIRS else p
-        checked[p] = grid[i % 2].checkbox(label, value=(p in selected), key=f"pairchk_{p}")
+        checked[p] = grid[i % 2].checkbox(p, value=(p in selected), key=f"pairchk_{p}")
     new_sel = [p for p in all_pairs if checked[p]]
     st.caption(f"Ticked {len(new_sel)}/20")
     if st.button("💾 Save Pairs", type="primary"):
@@ -419,13 +410,16 @@ def tab_dashboard():
 
     # Section 4 — Engine Status
     st.subheader("⚙️ Engine Status")
-    model = lgbm.get_model()
+    # Only load the model (imports the heavy lightgbm lib) when the AI model is
+    # enabled; it's OFF by config, so skip it to keep the dashboard light.
+    ai_on = db.get_bool("ai_model_on", False)
+    model = lgbm.get_model() if ai_on else None
     sc = st.columns(2)
     sc[0].write(f"⚡ Scalping: {'🟢 Running' if db.get_bool('scalping_bot_on') else '🟡 Stopped'} "
                 f"[{db.get_setting('scalping_mode','paper').upper()}]")
     sc[0].write(f"📈 Swing: {'🟢 Running' if db.get_bool('swing_bot_on') else '🟡 Stopped'} "
                 f"[{db.get_setting('swing_mode','paper').upper()}]")
-    sc[1].write(f"🤖 LightGBM: {'🟢 Active' if model else '🔴 Not Trained'}")
+    sc[1].write(f"🤖 LightGBM: {'🟢 Active' if model else ('🔴 Not Trained' if ai_on else '⚪ Off')}")
     sc[1].write(f"📰 Sentiment: {'🟢 Connected' if db.get_setting('hf_token') else '🔴 Error'}")
 
     # Section 5 — Live Positions

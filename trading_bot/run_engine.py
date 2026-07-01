@@ -32,10 +32,17 @@ def main():
         vps_optimizer.start_vps_monitor()
     except Exception as e:  # noqa: BLE001
         db.log_event("ENGINE_ERROR", f"vps monitor: {e}")
-    try:
-        lgbm.ensure_model_on_start()
-    except Exception as e:  # noqa: BLE001
-        db.log_event("ENGINE_ERROR", f"model load: {e}")
+    # Only touch LightGBM when the AI model is actually enabled. It's OFF by
+    # config (backtests proved it's noise), and since `import lightgbm` happens
+    # lazily inside train.py, skipping this keeps the heavy library out of RAM
+    # entirely on the 1GB VPS.
+    if db.get_bool("ai_model_on", False):
+        try:
+            lgbm.ensure_model_on_start()
+        except Exception as e:  # noqa: BLE001
+            db.log_event("ENGINE_ERROR", f"model load: {e}")
+    else:
+        db.log_event("ENGINE", "AI model OFF — skipping LightGBM load (lighter)")
     try:
         tg.start_command_bot()
     except Exception as e:  # noqa: BLE001
