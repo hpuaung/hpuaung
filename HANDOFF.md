@@ -47,6 +47,14 @@ edge — but a **timeframe sweep found ONE real, broad edge: breakout on the DAI
     cutting winners (backtest held ~200d).
   - `swing_trail_auto=0` — backtest exited on SL/TP1 only; trailing deviates.
   - `max_concurrent_trades=20` — backtest took every signal (lower for real money).
+- **Out-of-sample test → trade the BROAD universe, don't hand-pick**
+  (`oos_backtest.py 0.55 3000`): selecting pairs on the older 55% then testing on
+  the unseen newer 45% — the edge is 🟢 out-of-sample (**generalises, not
+  curve-fit**), BUT pair-picking HURT: selected basket PF 1.90 vs all-38 PF 2.02
+  vs the *dropped* pairs PF 2.13. The edge is in the STRATEGY (daily breakout),
+  not the pair choice. So the deployed config trades the **broad 38-pair
+  universe** (more trades, same/better edge, zero selection bias). `configure_bot.py`
+  now sets all 38; engine cap `[:40]`, dashboard Max 40, `max_concurrent=30`.
 - **Walk-forward robustness PASSED** (`robust_backtest.py all 1d 3000 3 detail`):
   splitting the 20-pair history into 3 chronological eras, **all three are 🟢** —
   seg1 PF 2.04 (+0.258R), seg2 PF 2.20 (+0.351R), seg3 PF 2.44 (+0.357R), overall

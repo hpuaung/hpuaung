@@ -384,22 +384,27 @@ def tab_dashboard():
                "Change it in the ⚡ Scalping / 📈 Swing tab.")
 
     # Section 3 — Pair Selection (checkbox list + explicit Save)
-    # Only the 20 breakout-1d 🟢 pairs (PF>1.3, n>=15 in backtest) are offered.
-    st.subheader("🎯 Pair Selection (the 20 breakout-1d edge pairs)")
-    all_pairs = ["BTCUSDT", "SOLUSDT", "XRPUSDT", "AVAXUSDT", "LTCUSDT",
-                 "DOTUSDT", "ETCUSDT", "XLMUSDT", "NEARUSDT", "FILUSDT",
-                 "AAVEUSDT", "ALGOUSDT", "VETUSDT", "HBARUSDT", "GRTUSDT",
-                 "SANDUSDT", "EOSUSDT", "THETAUSDT", "XTZUSDT", "CRVUSDT"]
+    # Broad 38-pair universe — the OOS test showed pair-picking doesn't help, so
+    # we trade the whole liquid universe (breakout-1d edge is strategy-wide).
+    st.subheader("🎯 Pair Selection (breakout-1d broad universe)")
+    all_pairs = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
+                 "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "LTCUSDT",
+                 "DOTUSDT", "TRXUSDT", "ATOMUSDT", "UNIUSDT", "ETCUSDT",
+                 "XLMUSDT", "BCHUSDT", "NEARUSDT", "APTUSDT", "ARBUSDT",
+                 "OPUSDT", "FILUSDT", "INJUSDT", "SUIUSDT", "AAVEUSDT",
+                 "ALGOUSDT", "ICPUSDT", "VETUSDT", "HBARUSDT", "GRTUSDT",
+                 "SANDUSDT", "MANAUSDT", "AXSUSDT", "EOSUSDT", "THETAUSDT",
+                 "XTZUSDT", "CRVUSDT", "DYDXUSDT"]
     selected = [p.strip() for p in db.get_setting("selected_pairs", "").split(",") if p.strip()]
     grid = st.columns(2)
     checked = {}
     for i, p in enumerate(all_pairs):
         checked[p] = grid[i % 2].checkbox(p, value=(p in selected), key=f"pairchk_{p}")
     new_sel = [p for p in all_pairs if checked[p]]
-    st.caption(f"Ticked {len(new_sel)}/20")
+    st.caption(f"Ticked {len(new_sel)}/38")
     if st.button("💾 Save Pairs", type="primary"):
-        if len(new_sel) > 20:
-            st.error("⚠️ Max 20 pairs — untick some.")
+        if len(new_sel) > 40:
+            st.error("⚠️ Max 40 pairs — untick some.")
         elif not new_sel:
             st.error("Pick at least 1 pair.")
         else:

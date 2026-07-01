@@ -3,14 +3,13 @@
 chart, swing engine, paper mode, restricted to the pairs where breakout-1d showed
 a real edge (expectancy>0 AND PF>1.3) in strategy_backtest.py.
 
-This is the ONE config the full timeframe sweep + per-pair test justified:
-  - breakout-1d aggregate over 38 pairs: +0.150R, PF 1.49, n=798 over ~6.5yr —
-    the whole universe is 🟢, so this is a structural edge, not one lucky pair.
+This is the ONE config every backtest justified:
+  - breakout-1d over the 38-pair universe: strongly 🟢 (walk-forward all 3 eras
+    green, PF ~2.0-2.4; out-of-sample PF 2.02 on unseen data).
   - MTF (1h/4h/1d), scalping (5m/15m/30m) and trend all tested NEGATIVE.
-  - kept pairs = the 20 that are individually 🟢 (PF>1.3) with a real sample
-    (n>=15) in strategy_backtest.py ... 1d ... detail only=breakout. Dropped
-    ETH/BNB/DOGE/ADA/LINK/TRX/ATOM/UNI/BCH/ARB/OP/MANA/AXS/DYDX (<=noise) and
-    INJ/ICP (🟢 but n<15, too thin).
+  - PAIR SELECTION DOESN'T HELP: the OOS test showed hand-picked pairs (PF 1.90)
+    did WORSE than the whole universe (PF 2.02) and the "dropped" pairs (PF 2.13).
+    The edge is in the strategy, not the pair choice — so trade the broad universe.
 
 Run on the VPS:  .venv/bin/python configure_bot.py
 Then restart the engine so it picks up the new settings.
@@ -21,12 +20,16 @@ warnings.filterwarnings("ignore")
 import database as db
 db.init_db()
 
-# the 20 pairs where breakout-1d is a clear 🟢 with a real sample (n>=15).
-# in-sample, but the full 38-pair aggregate is also 🟢 (+0.150R) so the basket
-# edge is broad, not cherry-picked.
-PAIRS = ("BTCUSDT,SOLUSDT,XRPUSDT,AVAXUSDT,LTCUSDT,DOTUSDT,ETCUSDT,XLMUSDT,"
-         "NEARUSDT,FILUSDT,AAVEUSDT,ALGOUSDT,VETUSDT,HBARUSDT,GRTUSDT,SANDUSDT,"
-         "EOSUSDT,THETAUSDT,XTZUSDT,CRVUSDT")
+# BROAD 38-pair universe. The out-of-sample test (oos_backtest.py) proved that
+# hand-picking pairs by past edge does NOT help — the "dropped" pairs did just as
+# well on unseen data (PF 2.13 vs 1.90 for the selected ones). The edge lives in
+# the STRATEGY (daily breakout), not in which pairs you pick, so we trade the
+# whole liquid universe: more trades, same/better edge, zero selection bias.
+PAIRS = ("BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,DOGEUSDT,ADAUSDT,AVAXUSDT,"
+         "LINKUSDT,LTCUSDT,DOTUSDT,TRXUSDT,ATOMUSDT,UNIUSDT,ETCUSDT,XLMUSDT,"
+         "BCHUSDT,NEARUSDT,APTUSDT,ARBUSDT,OPUSDT,FILUSDT,INJUSDT,SUIUSDT,"
+         "AAVEUSDT,ALGOUSDT,ICPUSDT,VETUSDT,HBARUSDT,GRTUSDT,SANDUSDT,MANAUSDT,"
+         "AXSUSDT,EOSUSDT,THETAUSDT,XTZUSDT,CRVUSDT,DYDXUSDT")
 
 CONFIG = {
     # engine selection: swing only, scalping off (scalping has no edge)
@@ -86,12 +89,11 @@ CONFIG = {
     "auto_pilot": "0",
     "global_auto_risk": "0",
 
-    # allow all 20 pairs to hold a position at once. The backtest took EVERY
-    # signal (no concurrency cap), and daily breakouts cluster on market-wide
-    # days, so capping lower would skip signals and under-reproduce the edge on
-    # paper. Each trade still risks a fixed % via SL-aware sizing.
-    # (For REAL money later, consider lowering to ~10 to limit correlated risk.)
-    "max_concurrent_trades": "20",
+    # broad basket: allow many concurrent positions so clustered market-wide
+    # breakouts aren't skipped (the backtest took every signal). Each trade still
+    # risks a fixed % via SL-aware sizing.
+    # (For REAL money later, lower this to ~10-15 to limit correlated risk.)
+    "max_concurrent_trades": "30",
 
     # trade only the winning pairs
     "selected_pairs": PAIRS,

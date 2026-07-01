@@ -477,9 +477,9 @@ def _enforce_health(equity):
 
 def _selected_pairs():
     raw = db.get_setting("selected_pairs", "")
-    # cap at 20 (breakout-1d runs a diversified 20-pair basket; the dashboard
-    # enforces the same max). Was [:10], which silently dropped pairs 11-20.
-    return [p.strip() for p in raw.split(",") if p.strip()][:20]
+    # cap at 40 (breakout-1d trades a broad ~38-pair universe; the dashboard
+    # enforces the same max). Was [:10] then [:20].
+    return [p.strip() for p in raw.split(",") if p.strip()][:40]
 
 
 # ---------------------------------------------------------------------------
