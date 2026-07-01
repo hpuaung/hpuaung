@@ -63,18 +63,24 @@ def run_pair(df):
     lo = df["low"].astype(float).tolist()
     c = df["close"].astype(float).tolist()
     n = len(c)
-    pos = {s: None for s in STRATS}
-    trades = {s: [] for s in STRATS}
+    active = [ONLY] if ONLY else STRATS
+    # hybrid needs all three base signals; otherwise compute only what's active
+    need_tr = ("trend" in active) or ("hybrid" in active)
+    need_rv = ("reversion" in active) or ("hybrid" in active)
+    need_bk = ("breakout" in active) or ("hybrid" in active)
+    pos = {s: None for s in active}
+    trades = {s: [] for s in active}
     for i in range(WARMUP, n):
         sub = df.iloc[:i + 1]
         if not ind.has_enough(sub):
             continue
-        tr = trend.run(sub, mtf=False)
-        rv = reversion.run(sub, mtf=False)
-        bk = breakout.run(sub, mtf=False)
-        hy = ai_hybrid.run(sub, tr, rv, bk, ai_threshold=0.60, use_model=False)
+        tr = trend.run(sub, mtf=False) if need_tr else None
+        rv = reversion.run(sub, mtf=False) if need_rv else None
+        bk = breakout.run(sub, mtf=False) if need_bk else None
+        hy = (ai_hybrid.run(sub, tr, rv, bk, ai_threshold=0.60, use_model=False)
+              if "hybrid" in active else None)
         sigs = {"trend": tr, "reversion": rv, "breakout": bk, "hybrid": hy}
-        for s in STRATS:
+        for s in active:
             p = pos[s]
             if p:
                 d = p["d"]; ex = None
