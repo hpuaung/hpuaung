@@ -442,15 +442,11 @@ def tab_dashboard():
 
     # Section 7 — Performance Metrics
     st.subheader("📈 Performance Metrics")
-    _trade_filter = st.radio("Show trades:", ["Real only", "Paper only", "All"],
+    _trade_filter = st.radio("Show trades:", ["Paper only", "Real only", "All"],
                              horizontal=True, index=0, key="rank_filter")
     _pm_filter = (False if _trade_filter == "Real only"
                   else True if _trade_filter == "Paper only" else None)
     _performance_metrics(_pm_filter)
-
-    # AI learning progress toward the adaptive thresholds.
-    st.subheader("🧠 AI Learning Progress")
-    _learning_progress()
 
     # Section 8 — Pair Performance Ranking
     st.subheader("🏆 Pair Ranking")
@@ -647,25 +643,6 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
         bool_toggle("📈 Trend Following", f"{strategy}_trend_on", True)
         bool_toggle("🔄 Mean Reversion", f"{strategy}_reversion_on", True)
         bool_toggle("🚀 Breakout", f"{strategy}_breakout_on", True)
-    st.markdown("---")
-    news_on = bool_toggle("📰 News Filter", f"{strategy}_news_on", False)
-    if news_on:
-        slider("GNews Weight", f"{strategy}_gnews_weight", 0.1, 0.5, 0.05,
-               db.get_float(f"{strategy}_gnews_weight", 0.3))
-        slider("HF Min Score", f"{strategy}_hf_min_score", 0.50, 0.95, 0.01,
-               db.get_float(f"{strategy}_hf_min_score", 0.60))
-        st.caption(f"Cache: 30min (auto) | Today: {news.gnews_requests_today()}/100 requests")
-        st.caption(f"Last sentiment: {db.get_setting('last_sentiment_result', '—')}")
-
-    # Section 4 — Market Context
-    st.divider()
-    st.subheader("📡 Market Context")
-    funding_on = bool_toggle("Use Funding/OI in Signal", f"{strategy}_funding_filter", False)
-    if funding_on:
-        slider("Funding/OI Weight", f"{strategy}_funding_weight", 0.10, 0.30, 0.05,
-               db.get_float(f"{strategy}_funding_weight", 0.20))
-    _market_context_display(strategy)
-
     # Section 5 — Risk Management
     st.divider()
     st.subheader("🛡️ Risk Management")
@@ -745,15 +722,6 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
         else:
             slider("Max Hold Days", "swing_max_hold_days", 1, 30, 1,
                    db.get_int("swing_max_hold_days", 7), is_int=True)
-
-    # Section 8 — Session Filter
-    st.divider()
-    st.subheader("🌍 Session Filter")
-    bool_toggle("Session Filter", f"{strategy}_session_filter", False)
-    bool_toggle("London 08:00-12:00 UTC", f"{strategy}_london_on", True)
-    bool_toggle("New York 13:00-17:00 UTC", f"{strategy}_ny_on", True)
-    bool_toggle("Asia 00:00-04:00 UTC", f"{strategy}_asia_on", True)
-    bool_toggle("Weekend Trading Off", f"{strategy}_weekend_off", False)
 
     # Section 9 — Correlation Filter
     st.divider()
@@ -974,31 +942,6 @@ def tab_settings():
                 st.success("Removed — monitor will fall back to rule-based analysis")
                 st.rerun()
 
-    with st.expander("🤖 3. LightGBM Model", expanded=False):
-        ai_on = bool_toggle("🧠 Use AI/LightGBM model in entries", "ai_model_on", True)
-        if ai_on:
-            st.caption("ON → the model nudges entry signals. ⚠️ Live data showed it "
-                       "was anti-predictive (losers had higher AI confidence). "
-                       "Turn OFF to trade on pure technical signals (model-free).")
-        else:
-            st.success("🧠 AI model OFF — entries use pure technical/structure/volume "
-                       "signals only. No LightGBM influence. (Recommended given the data.)")
-        select("Retrain Schedule", "lgbm_retrain_schedule", ["daily", "weekly", "manual"],
-               db.get_setting("lgbm_retrain_schedule", "weekly"))
-        select("Training Period", "lgbm_train_period", ["1m", "3m", "6m", "1y"],
-               db.get_setting("lgbm_train_period", "6m"))
-        st.write(f"Last Trained: {db.get_setting('lgbm_last_trained', '—')}")
-        st.write(f"Accuracy: {db.get_setting('lgbm_accuracy', '0')}")
-        if lgbm.is_training():
-            st.info("Training in progress…")
-        if st.button("🔄 RETRAIN NOW"):
-            lgbm.train_in_background()
-            st.toast("Training started in background")
-        st.caption("Features: RSI, EMA ratios, BB position/width, Stoch K, CCI, ADX, "
-                   "MACD hist, Supertrend, ATR ratio, Volume ratio, Funding, OI%, "
-                   "Sentiment, Candle/Wick ratios, Trend/Reversion/Breakout signals")
-        st.caption("Labels: BUY=2 (>+1% in 3 candles), HOLD=1, SELL=0 (<-1%)")
-
     with st.expander("🚦 4. Global Risk Limits", expanded=False):
         g_auto = db.get_bool("auto_pilot", False) or bool_toggle(
             "🤖 Auto Global Risk (bot-managed limits)", "global_auto_risk", False)
@@ -1106,40 +1049,6 @@ def tab_settings():
         if st.button("🧽 Clean Now"):
             ram = vps_optimizer.force_clean("manual")
             st.toast(f"Cleaned → RAM {ram:.1f}%")
-
-    with st.expander("🌑 8. News Blackout Mode", expanded=False):
-        bool_toggle("Blackout Mode", "blackout_on", False)
-        slider("Volume Spike x", "blackout_volume_spike_x", 2.0, 10.0, 0.5,
-               db.get_float("blackout_volume_spike_x", 5.0))
-        slider("ATR Expansion x", "blackout_atr_expand_x", 1.5, 5.0, 0.5,
-               db.get_float("blackout_atr_expand_x", 3.0))
-        slider("Freeze Before (min)", "blackout_before_min", 5, 60, 5,
-               db.get_int("blackout_before_min", 15), is_int=True)
-        slider("Freeze After (min)", "blackout_after_min", 5, 60, 5,
-               db.get_int("blackout_after_min", 15), is_int=True)
-        select("Action", "blackout_action", ["no_entry", "close_all"],
-               db.get_setting("blackout_action", "no_entry"))
-        active = db.get_bool("blackout_active", False)
-        if active:
-            st.error("🔴 BLACKOUT ACTIVE")
-        else:
-            st.success("🟢 Clear")
-        if active and st.button("Clear Blackout"):
-            db.save_setting("blackout_active", "0")
-            st.rerun()
-
-    with st.expander("📈 9. Performance Optimizer", expanded=False):
-        bool_toggle("Win Streak Bonus", "win_streak_bonus_on", False)
-        slider("Win streak count", "streak_win_count", 2, 5, 1,
-               db.get_int("streak_win_count", 3), is_int=True)
-        slider("Bonus per win %", "streak_bonus_pct", 0.05, 0.5, 0.05,
-               db.get_float("streak_bonus_pct", 0.1))
-        slider("Loss streak count", "streak_loss_count", 2, 5, 1,
-               db.get_int("streak_loss_count", 3), is_int=True)
-        slider("Risk cut per loss %", "streak_cut_pct", 0.1, 1.0, 0.1,
-               db.get_float("streak_cut_pct", 0.5))
-        st.caption(f"Current streak adj: {db.get_float('streak_risk_adj', 0):+.2f}% | "
-                   f"Win streak {db.get_int('win_streak')} | Loss streak {db.get_int('loss_streak')}")
 
     with st.expander("🔒 11. Login Password", expanded=False):
         st.caption("Set the dashboard login password. Leave empty to disable login.")
