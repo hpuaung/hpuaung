@@ -63,6 +63,18 @@ CONFIG = {
     "swing_dir_filter": "0",
     "swing_hour_filter": "0",
     "swing_session_pair_filter": "0",
+    "swing_news_on": "0",
+    "swing_funding_filter": "0",
+
+    # correlation filter OFF: on a market-wide breakout day all 20 pairs fire the
+    # SAME direction; the default (max 2 same-direction) would block 18 of them
+    # and wreck the basket. The backtest had no such cap.
+    "swing_corr_filter": "0",
+
+    # max-hold: a 1d breakout can take weeks to reach TP. The default auto-close
+    # at 7 days would cut winners short (backtest held ~200 days). Give it room.
+    "swing_auto_maxhold": "0",
+    "swing_max_hold_days": "30",
 
     # no auto-pilot / global-auto overriding the chosen settings
     "auto_pilot": "0",
