@@ -48,6 +48,11 @@ edge — but a **timeframe sweep found ONE real, broad edge: breakout on the DAI
   - `breakout` at 1h/4h: +0.004R → **-0.14R** (small-sample positive vanished).
     The edge only appears at **1d** — timeframe is everything here.
   - `reversion`: 22–31% win, negative.
+- **Multi-timeframe (MTF) structure also fails** (`mtf_backtest.py`, leak-free):
+  swing 1h→4h→1d and scalp 3m→15m→1h with the confirm+trend filter ON — NO 🟢 on
+  any strategy/pair. breakout goes from +0.120R@1d (pure) to **−0.099R@1h+MTF**;
+  the filter helps a little (−0.117→−0.099) but nowhere near positive. Scalp 3m is
+  worst (hybrid −0.513R). Lowering the timeframe kills the edge; MTF can't save it.
 - Extras all failed: entry filters (confirm/ADX/volume), R:R sweep (2/3/4),
   AI/LightGBM model on **or** off (model is noise — losers scored ~same), signal
   **flip** (R:R geometry kills it), **grid** (profits in chop, the underwater bag
