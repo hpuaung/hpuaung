@@ -49,6 +49,10 @@ CONFIG = {
     "swing_auto_tpsl": "1",
     "swing_partial_tp": "1",
     "atr_sl_enabled": "0",
+    # trailing OFF: the backtest exited on SL/TP1 only, so trailing would deviate
+    # from the measured edge (it can cut winners short or exit early).
+    "swing_trail_auto": "0",
+    "swing_auto_be": "1",
 
     # min_rr MUST be low: breakout's SL sits at the broken level (tight), so a
     # high min_rr would block every entry.
