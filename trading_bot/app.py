@@ -384,20 +384,31 @@ def tab_dashboard():
                "Change it in the ⚡ Scalping / 📈 Swing tab.")
 
     # Section 3 — Pair Selection (checkbox list + explicit Save)
-    st.subheader("🎯 Pair Selection (Max 10)")
-    all_pairs = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT",
-                 "DOGEUSDT", "LINKUSDT", "AVAXUSDT", "MATICUSDT", "DOTUSDT",
-                 "LTCUSDT", "TRXUSDT", "ATOMUSDT"]
+    # The first 20 are the breakout-1d 🟢 pairs (PF>1.3, n>=15 in backtest); the
+    # rest backtested negative and are kept only so they can be toggled/tested.
+    st.subheader("🎯 Pair Selection (Max 20)")
+    EDGE_PAIRS = ["BTCUSDT", "SOLUSDT", "XRPUSDT", "AVAXUSDT", "LTCUSDT",
+                  "DOTUSDT", "ETCUSDT", "XLMUSDT", "NEARUSDT", "FILUSDT",
+                  "AAVEUSDT", "ALGOUSDT", "VETUSDT", "HBARUSDT", "GRTUSDT",
+                  "SANDUSDT", "EOSUSDT", "THETAUSDT", "XTZUSDT", "CRVUSDT"]
+    OTHER_PAIRS = ["ETHUSDT", "BNBUSDT", "DOGEUSDT", "ADAUSDT", "LINKUSDT",
+                   "TRXUSDT", "ATOMUSDT", "UNIUSDT", "BCHUSDT", "APTUSDT",
+                   "ARBUSDT", "OPUSDT", "INJUSDT", "ICPUSDT", "SUIUSDT",
+                   "MANAUSDT", "AXSUSDT", "DYDXUSDT"]
+    all_pairs = EDGE_PAIRS + OTHER_PAIRS
     selected = [p.strip() for p in db.get_setting("selected_pairs", "").split(",") if p.strip()]
+    st.caption("🟢 Top 20 = backtest edge (PF>1.3). Below the line = negative in "
+               "backtest (test-only).")
     grid = st.columns(2)
     checked = {}
     for i, p in enumerate(all_pairs):
-        checked[p] = grid[i % 2].checkbox(p, value=(p in selected), key=f"pairchk_{p}")
+        label = ("🟢 " + p) if p in EDGE_PAIRS else p
+        checked[p] = grid[i % 2].checkbox(label, value=(p in selected), key=f"pairchk_{p}")
     new_sel = [p for p in all_pairs if checked[p]]
-    st.caption(f"Ticked {len(new_sel)}/10")
+    st.caption(f"Ticked {len(new_sel)}/20")
     if st.button("💾 Save Pairs", type="primary"):
-        if len(new_sel) > 10:
-            st.error("⚠️ Max 10 pairs — untick some.")
+        if len(new_sel) > 20:
+            st.error("⚠️ Max 20 pairs — untick some.")
         elif not new_sel:
             st.error("Pick at least 1 pair.")
         else:
