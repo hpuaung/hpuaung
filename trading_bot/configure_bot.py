@@ -34,8 +34,10 @@ CONFIG = {
     "swing_bot_on": "1",
     "swing_mode": "paper",
 
-    # timeframe: daily, fixed (auto-tf off so it can't wander off 1d)
-    "swing_auto_tf": "0",
+    # timeframe: daily. Auto-tf is now SAFE (its swing preset was changed from 4h
+    # to 1d in engine._effective_tfs), so Auto ON also gives 1d. Entry is also set
+    # to 1d explicitly so switching to Manual on the dashboard still lands on 1d.
+    "swing_auto_tf": "1",
     "swing_timeframe": "1d",
     "swing_mtf_filter": "0",
 

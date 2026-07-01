@@ -612,7 +612,7 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
     auto_tf = bool_toggle("🤖 Auto Timeframe (bot decides)", f"{strategy}_auto_tf", True)
     if auto_tf:
         preset = "Entry 5m · Confirm 15m · Trend 1h" if strategy == "scalping" \
-                 else "Entry 4h · Confirm 1d · Trend 3d"
+                 else "Entry 1d · Confirm 3d · Trend 1w"
         st.caption(f"Bot auto → {preset}")
     else:
         tf_buttons("Entry TF", f"{strategy}_timeframe", entry_opts, db.get_setting(f"{strategy}_timeframe"))

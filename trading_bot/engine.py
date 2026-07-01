@@ -37,7 +37,10 @@ def _effective_tfs(strategy):
     if db.auto_flag(f"{strategy}_auto_tf", True):
         if strategy == "scalping":
             return "5m", "15m", "1h"
-        return "4h", "1d", "3d"
+        # swing auto = the proven edge: breakout on the DAILY chart. (Was 4h,
+        # which the backtests showed LOSES; only 1d has an edge.) This makes
+        # Auto Timeframe safe to leave on for swing.
+        return "1d", "3d", "1w"
     return (db.get_setting(f"{strategy}_timeframe", "5m"),
             db.get_setting(f"{strategy}_confirm_tf", "15m"),
             db.get_setting(f"{strategy}_trend_tf", "1h"))
