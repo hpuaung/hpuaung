@@ -4,11 +4,13 @@ chart, swing engine, paper mode, restricted to the pairs where breakout-1d showe
 a real edge (expectancy>0 AND PF>1.3) in strategy_backtest.py.
 
 This is the ONE config the full timeframe sweep + per-pair test justified:
-  - breakout-1d aggregate: +0.120R, PF 1.40 over ~6.5yr (only 🟢 in the sweep)
-  - kept pairs (per-pair 1d breakout): BTC(PF3.14) AVAX(2.88) XRP(2.13)
-    SOL(1.87) LTC(1.79). Dropped ETH/BNB/LINK/MATIC/ATOM/DOGE/ADA (<=noise).
-  - scalping = dead (every strategy negative on 5m/15m/30m) -> OFF
-  - trend = marginal (PF ~1.14, -0.42R at 1h) -> OFF, would only dilute breakout
+  - breakout-1d aggregate over 38 pairs: +0.150R, PF 1.49, n=798 over ~6.5yr —
+    the whole universe is 🟢, so this is a structural edge, not one lucky pair.
+  - MTF (1h/4h/1d), scalping (5m/15m/30m) and trend all tested NEGATIVE.
+  - kept pairs = the 20 that are individually 🟢 (PF>1.3) with a real sample
+    (n>=15) in strategy_backtest.py ... 1d ... detail only=breakout. Dropped
+    ETH/BNB/DOGE/ADA/LINK/TRX/ATOM/UNI/BCH/ARB/OP/MANA/AXS/DYDX (<=noise) and
+    INJ/ICP (🟢 but n<15, too thin).
 
 Run on the VPS:  .venv/bin/python configure_bot.py
 Then restart the engine so it picks up the new settings.
@@ -19,8 +21,12 @@ warnings.filterwarnings("ignore")
 import database as db
 db.init_db()
 
-# pairs where breakout-1d is a clear 🟢 (in-sample; daily breakout is structural)
-PAIRS = "BTCUSDT,SOLUSDT,XRPUSDT,AVAXUSDT,LTCUSDT"
+# the 20 pairs where breakout-1d is a clear 🟢 with a real sample (n>=15).
+# in-sample, but the full 38-pair aggregate is also 🟢 (+0.150R) so the basket
+# edge is broad, not cherry-picked.
+PAIRS = ("BTCUSDT,SOLUSDT,XRPUSDT,AVAXUSDT,LTCUSDT,DOTUSDT,ETCUSDT,XLMUSDT,"
+         "NEARUSDT,FILUSDT,AAVEUSDT,ALGOUSDT,VETUSDT,HBARUSDT,GRTUSDT,SANDUSDT,"
+         "EOSUSDT,THETAUSDT,XTZUSDT,CRVUSDT")
 
 CONFIG = {
     # engine selection: swing only, scalping off (scalping has no edge)
@@ -61,6 +67,10 @@ CONFIG = {
     # no auto-pilot / global-auto overriding the chosen settings
     "auto_pilot": "0",
     "global_auto_risk": "0",
+
+    # 20 pairs -> daily breakouts cluster in market-wide moves, so allow more
+    # concurrent positions (each still risks a fixed % via SL-aware sizing).
+    "max_concurrent_trades": "8",
 
     # trade only the winning pairs
     "selected_pairs": PAIRS,

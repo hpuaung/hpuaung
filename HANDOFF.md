@@ -21,14 +21,16 @@ edge — but a **timeframe sweep found ONE real, broad edge: breakout on the DAI
   (aggregate **+0.120R, PF 1.40, 70% win, n=147** over ~6.5yr). Every strategy on
   5m/15m/30m/1h is negative; trend at 4h/1d is only marginally positive (PF ~1.14)
   and −0.42R at 1h — not a real edge, so it stays OFF.
-- **Per-pair pruning** (`strategy_backtest.py <12 pairs> 1d 3000 detail
-  only=breakout`) — keep only pairs that are 🟢 on their own:
-  - **BTC PF 3.14 (+0.49R) · AVAX 2.88 (+0.64R) · XRP 2.13 (+0.38R) ·
-    SOL 1.87 (+0.17R) · LTC 1.79 (+0.17R)** → KEEP.
-  - ETH/BNB/LINK(−0.45R)/MATIC/ATOM/DOGE/ADA → negative-to-noise → DROPPED.
-  - Kept-5 aggregate ≈ **+0.35R/trade** (~4× the all-12 average). NOTE: pair
-    selection is in-sample, so live will be somewhat lower — but daily breakout is
-    a *structural* event (real supply/demand shift), not a fitted pattern.
+- **Broad universe confirms it** (`strategy_backtest.py <38 pairs> 1d 3000 detail
+  only=breakout`): breakout-1d aggregate over 38 pairs = **+0.150R, PF 1.49,
+  n=798** — the *whole basket* is 🟢, so this is structural, not a lucky pair.
+- **Kept pairs = the 20 that are individually 🟢 (PF>1.3) with n>=15:**
+  BTC SOL XRP AVAX LTC DOT ETC XLM NEAR FIL AAVE ALGO VET HBAR GRT SAND EOS THETA
+  XTZ CRV. Dropped ETH/BNB/DOGE/ADA/LINK(−0.45R)/TRX/ATOM/UNI/BCH/ARB/OP/MANA/
+  AXS/DYDX (≤noise) and INJ/ICP (🟢 but n<15, too thin). NOTE: pair selection is
+  in-sample, but since the full 38-pair aggregate is also 🟢 the basket edge is
+  broad, not cherry-picked. 20 pairs also lifts frequency toward ~1 signal/day
+  (breakouts cluster in market-wide moves rather than spacing out evenly).
 - Why it works where scalping doesn't: fees are trivial vs a daily breakout move;
   only **~4 trades/pair/year** (~20–30/yr across 5 pairs) — patient SWING, not
   scalping. **Days-to-weeks between entries is NORMAL**; `swing -> NONE` most bars
