@@ -670,6 +670,10 @@ DEFAULTS = {
     "auto_pilot": "0",
     # LightGBM direction model influence on entries (off = pure technical signals).
     "ai_model_on": "1",
+    # 4-hourly Claude/rule-based auto-adjuster (ai_monitor.py). OFF: it's a
+    # scalping-era tool that auto-removes pairs / changes risk, which fights the
+    # breakout-1d broad-basket config. Left off so it can't mutate settings.
+    "ai_monitor_on": "0",
     # Global risk limits managed automatically (max concurrent scales w/ balance).
     "global_auto_risk": "0",
     "selected_pairs": "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,LINKUSDT,AVAXUSDT,DOGEUSDT,ADAUSDT,LTCUSDT,DOTUSDT,ATOMUSDT",
