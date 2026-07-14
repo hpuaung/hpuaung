@@ -106,7 +106,9 @@ def _record_close(pos, qty, exit_price, reason, notifier=None):
         "fees_paid": fees,
         "net_pnl": net,
         "close_reason": reason,
-        "paper_mode": pos.get("paper_mode", 0),
+        # default 1 (paper), not 0 — a missing flag must not mislabel a paper
+        # trade as real (that also made clear_paper_trades miss them).
+        "paper_mode": pos.get("paper_mode", 1),
         "status": "closed",
         "hold_duration": hold_str,
         "lgbm_score": pos.get("lgbm_score"),
