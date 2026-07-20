@@ -822,6 +822,11 @@ DEFAULTS = {
     "scalping_mode": "paper",
     "swing_mode": "paper",
 
+    # Reversion tuning (opt-in; default OFF so backtests/swing are unchanged).
+    # RSI-extreme gate + fixed R:R exit — the best scalping config found (paper).
+    "reversion_rsi_extreme": "0",
+    "reversion_fixed_rr": "0",
+
     # Runtime/internal flags
     "blackout_active": "0",
     "win_streak": "0",
