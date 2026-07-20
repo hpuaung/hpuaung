@@ -27,9 +27,12 @@ INTERVALS = [x.strip() for x in (_a[1] if len(_a) > 1 else "1h").split(",") if x
 LIMIT = int(_a[2]) if len(_a) > 2 else 1500
 DETAIL = "detail" in _a          # per-pair breakdown
 ONLY = None                      # restrict to one strategy, e.g. only=breakout
+RR = None                        # override exit to a fixed R:R, e.g. rr=2 or rr=3
 for _x in _a:
     if _x.startswith("only="):
         ONLY = _x.split("=", 1)[1]
+    if _x.startswith("rr="):
+        RR = float(_x.split("=", 1)[1])
 
 if pairs_arg == "all":
     PAIRS = [p.strip() for p in db.get_setting(
@@ -106,6 +109,10 @@ def run_pair(df):
                 if r:
                     e = float(r["entry"]); sl = float(r["sl"]); tp = float(r["tp1"])
                     d = 1 if r["signal"] == "BUY" else -1
+                    # rr= overrides the native TP with a clean fixed R:R (keeps
+                    # the SL) to test whether a better R:R rescues the entry.
+                    if RR is not None:
+                        tp = e + d * RR * abs(e - sl)
                     pos[s] = {"i": i, "d": d, "entry": e, "sl": sl, "tp": tp,
                               "risk": abs(e - sl)}
     return trades
@@ -155,7 +162,10 @@ def run_interval(interval):
 
 print("=" * 70)
 print(f"STRATEGY BACKTEST (each strategy alone)  timeframes={','.join(INTERVALS)}")
-print("exits use each strategy's own SL / TP1.  model OFF in hybrid.")
+if RR is not None:
+    print(f"exit = FIXED R:R 1:{RR:g} (native SL kept, TP overridden).  model OFF.")
+else:
+    print("exits use each strategy's own SL / TP1.  model OFF in hybrid.")
 print("=" * 70)
 for _iv in INTERVALS:
     run_interval(_iv)
