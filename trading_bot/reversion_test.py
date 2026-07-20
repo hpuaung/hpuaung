@@ -114,7 +114,8 @@ def simulate(cfg, d):
             if ex is not None:
                 gross = (ex - pos["entry"])*dd
                 fee = (pos["entry"]+ex)*FEE
-                trades.append((gross-fee)/pos["risk"])
+                frac = (pos["i"]-WARMUP)/max(1, d["n"]-WARMUP)
+                trades.append((frac, (gross-fee)/pos["risk"]))
                 pos = None
         if not pos and d["sig"][i] and passes(cfg, d, i):
             s, e, sl = d["sig"][i]
@@ -125,15 +126,16 @@ def simulate(cfg, d):
 
 
 def line(label, t):
-    if not t:
+    rs = [r for _, r in t]
+    if not rs:
         print(f"  {label:18} no trades")
         return
-    w = [x for x in t if x > 0]
-    gW = sum(w); gL = -sum(x for x in t if x <= 0)
+    w = [x for x in rs if x > 0]
+    gW = sum(w); gL = -sum(x for x in rs if x <= 0)
     pf = gW/gL if gL > 0 else 99
-    exp = sum(t)/len(t)
+    exp = sum(rs)/len(rs)
     flag = " 🟢" if (exp > 0 and pf > 1.3) else ""
-    print(f"  {label:18} n={len(t):<5} win%={100*len(w)//len(t):<3} "
+    print(f"  {label:18} n={len(rs):<5} win%={100*len(w)//len(rs):<3} "
           f"expR={exp:+.3f} PF={pf:.2f}{flag}")
 
 
@@ -157,6 +159,15 @@ for iv in INTERVALS:
         for sym in data:
             allt += simulate(cfg, data[sym])
         line(cfg[0], allt)
+    # walk-forward for the winning config (rsi<20) — is it robust across eras?
+    win_cfg = ("rsi<20", 20, False, 0)
+    wf = []
+    for sym in data:
+        wf += simulate(win_cfg, data[sym])
+    print(f"  -- walk-forward rsi<20 (oldest->newest) --")
+    for k in range(3):
+        seg = [(f, r) for (f, r) in wf if k/3 <= f < (k+1)/3]
+        line(f"   seg {k+1}/3", seg)
 print("-"*64)
 print("🟢 = expR>0 AND PF>1.3. If none clear it, reversion scalping tops out at")
 print("breakeven and no filter creates a real edge.")
