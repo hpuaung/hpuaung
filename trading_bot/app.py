@@ -646,8 +646,21 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
         st.caption("Manual mode — pick which strategies trade (majority vote). "
                    "Turn ON just one to test/learn a single strategy.")
         bool_toggle("📈 Trend Following", f"{strategy}_trend_on", True)
-        bool_toggle("🔄 Mean Reversion", f"{strategy}_reversion_on", True)
+        rev_on = bool_toggle("🔄 Mean Reversion", f"{strategy}_reversion_on", True)
         bool_toggle("🚀 Breakout", f"{strategy}_breakout_on", True)
+        # Reversion tuning (global settings; only relevant when reversion is on).
+        # Backtest: RSI-extreme gate + fixed R:R is the only scalping edge found.
+        if rev_on:
+            st.markdown("**🔄 Reversion tuning** (backtest: RSI<20 + R:R 1:3 = best)")
+            ext = slider("RSI extreme gate — 0 = off · lower = stricter/fewer/better",
+                         "reversion_rsi_extreme", 0, 40, 1,
+                         db.get_int("reversion_rsi_extreme", 0), is_int=True)
+            if ext > 0:
+                st.caption(f"🎯 Only fires when RSI ≤ {ext} (buy) / ≥ {100-ext} (sell). "
+                           f"20 = edge (PF~1.3, fewer) · 25 = more trades (PF~1.1) · 0 = all.")
+            slider("Reversion R:R (TP = R × SL) — 0 = native TP",
+                   "reversion_fixed_rr", 0.0, 4.0, 0.5,
+                   db.get_float("reversion_fixed_rr", 0.0))
     # Section 5 — Risk Management
     st.divider()
     st.subheader("🛡️ Risk Management")
