@@ -383,35 +383,9 @@ def tab_dashboard():
     st.caption("Each engine runs its own mode — e.g. Swing on Paper while Scalp is Real. "
                "Change it in the ⚡ Scalping / 📈 Swing tab.")
 
-    # Section 3 — Pair Selection (checkbox list + explicit Save)
-    # Broad 38-pair universe — the OOS test showed pair-picking doesn't help, so
-    # we trade the whole liquid universe (breakout-1d edge is strategy-wide).
-    st.subheader("🎯 Pair Selection (breakout-1d broad universe)")
-    all_pairs = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
-                 "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "LTCUSDT",
-                 "DOTUSDT", "TRXUSDT", "ATOMUSDT", "UNIUSDT", "ETCUSDT",
-                 "XLMUSDT", "BCHUSDT", "NEARUSDT", "APTUSDT", "ARBUSDT",
-                 "OPUSDT", "FILUSDT", "INJUSDT", "SUIUSDT", "AAVEUSDT",
-                 "ALGOUSDT", "ICPUSDT", "VETUSDT", "HBARUSDT", "GRTUSDT",
-                 "SANDUSDT", "MANAUSDT", "AXSUSDT", "EOSUSDT", "THETAUSDT",
-                 "XTZUSDT", "CRVUSDT", "DYDXUSDT"]
-    selected = [p.strip() for p in db.get_setting("selected_pairs", "").split(",") if p.strip()]
-    grid = st.columns(2)
-    checked = {}
-    for i, p in enumerate(all_pairs):
-        checked[p] = grid[i % 2].checkbox(p, value=(p in selected), key=f"pairchk_{p}")
-    new_sel = [p for p in all_pairs if checked[p]]
-    st.caption(f"Ticked {len(new_sel)}/38")
-    if st.button("💾 Save Pairs", type="primary"):
-        if len(new_sel) > 40:
-            st.error("⚠️ Max 40 pairs — untick some.")
-        elif not new_sel:
-            st.error("Pick at least 1 pair.")
-        else:
-            db.save_setting("selected_pairs", ",".join(new_sel))
-            tg.send_message("🎯 <b>Pairs updated</b>\n" + ", ".join(new_sel))
-            st.success(f"Saved {len(new_sel)} pairs ✅ (Telegram notified)")
-            st.rerun()
+    # Section 3 — Pair Selection (collapsed; click to expand)
+    with st.expander("🎯 Pair Selection (breakout-1d broad universe)", expanded=False):
+        _pair_selection()
 
     # Section 4 — Engine Status
     st.subheader("⚙️ Engine Status")
@@ -453,23 +427,49 @@ def tab_dashboard():
                   else True if _trade_filter == "Paper only" else None)
     _performance_metrics(_pm_filter)
 
-    # Section 8 — Pair Performance Ranking
-    st.subheader("🏆 Pair Ranking")
-    _pair_ranking(_pm_filter)
+    # Sections 8-11 — collapsed by default; click to expand each.
+    with st.expander("🏆 Pair Ranking", expanded=False):
+        _pair_ranking(_pm_filter)
 
-    # Section 9 — Best Trading Hours
-    st.subheader("🕐 Best Trading Hours (UTC)")
-    _best_hours(_pm_filter)
+    with st.expander("🕐 Best Trading Hours (UTC)", expanded=False):
+        _best_hours(_pm_filter)
 
-    # Section 10 — Trade History by Date (calendar)
-    st.subheader("📅 Trade History (by date)")
-    _history_calendar()
+    with st.expander("📅 Trade History (by date)", expanded=False):
+        _history_calendar()
 
-    # Section 11 — Export
-    st.subheader("📥 Export")
-    csv_bytes = _trades_csv(_pm_filter)
-    st.download_button("📥 Download Trade Report CSV", csv_bytes,
-                       file_name="trade_report.csv", mime="text/csv")
+    with st.expander("📥 Export", expanded=False):
+        csv_bytes = _trades_csv(_pm_filter)
+        st.download_button("📥 Download Trade Report CSV", csv_bytes,
+                           file_name="trade_report.csv", mime="text/csv")
+
+
+def _pair_selection():
+    """Checkbox grid + Save for the traded pair universe (shown in an expander)."""
+    all_pairs = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
+                 "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "LTCUSDT",
+                 "DOTUSDT", "TRXUSDT", "ATOMUSDT", "UNIUSDT", "ETCUSDT",
+                 "XLMUSDT", "BCHUSDT", "NEARUSDT", "APTUSDT", "ARBUSDT",
+                 "OPUSDT", "FILUSDT", "INJUSDT", "SUIUSDT", "AAVEUSDT",
+                 "ALGOUSDT", "ICPUSDT", "VETUSDT", "HBARUSDT", "GRTUSDT",
+                 "SANDUSDT", "MANAUSDT", "AXSUSDT", "EOSUSDT", "THETAUSDT",
+                 "XTZUSDT", "CRVUSDT", "DYDXUSDT"]
+    selected = [p.strip() for p in db.get_setting("selected_pairs", "").split(",") if p.strip()]
+    grid = st.columns(2)
+    checked = {}
+    for i, p in enumerate(all_pairs):
+        checked[p] = grid[i % 2].checkbox(p, value=(p in selected), key=f"pairchk_{p}")
+    new_sel = [p for p in all_pairs if checked[p]]
+    st.caption(f"Ticked {len(new_sel)}/38")
+    if st.button("💾 Save Pairs", type="primary"):
+        if len(new_sel) > 40:
+            st.error("⚠️ Max 40 pairs — untick some.")
+        elif not new_sel:
+            st.error("Pick at least 1 pair.")
+        else:
+            db.save_setting("selected_pairs", ",".join(new_sel))
+            tg.send_message("🎯 <b>Pairs updated</b>\n" + ", ".join(new_sel))
+            st.success(f"Saved {len(new_sel)} pairs ✅ (Telegram notified)")
+            st.rerun()
 
 
 def _history_calendar():
