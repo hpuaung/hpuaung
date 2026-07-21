@@ -672,31 +672,12 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
             tf_buttons("Trend TF", f"{strategy}_trend_tf", trend_opts, db.get_setting(f"{strategy}_trend_tf"))
     bool_toggle("MTF Filter", f"{strategy}_mtf_filter", True)
 
-    # Section 3 — Strategy Mix
+    # Section 3 — Strategy (each engine runs its ONE proven strategy; the losing
+    # strategies + AI Hybrid are removed to keep the tab focused).
     st.divider()
-    st.subheader("🧩 Strategy Mix")
-    hybrid_on = bool_toggle("🤖 AI Hybrid (uses all 3 strategies automatically)", f"{strategy}_hybrid_on", True)
-    if hybrid_on:
-        auto_thr = bool_toggle("🤖 Auto AI Threshold", f"{strategy}_auto_threshold", True)
-        if auto_thr:
-            rt = risk_guard.recommended_threshold(strategy)
-            wr, n = db.winrate(strategy)
-            hist = f"win rate {wr:.0f}%/{n} trades" if (n and wr is not None) else "still learning"
-            st.caption(f"🤖 Auto threshold **{rt:.2f}** ({hist}). Lower = more trades when winning, "
-                       f"higher = pickier when losing.")
-        else:
-            slider("AI Threshold (lower = more trades)", f"{strategy}_ai_threshold", 0.50, 0.95, 0.01,
-                   db.get_float(f"{strategy}_ai_threshold", 0.75))
-        st.caption("🤖 AI Hybrid auto-runs Trend + Mean Reversion + Breakout and picks the best "
-                   "setup. No need to toggle them individually.")
-    else:
-        st.caption("Manual mode — pick which strategies trade (majority vote). "
-                   "Turn ON just one to test/learn a single strategy.")
-        bool_toggle("📈 Trend Following", f"{strategy}_trend_on", True)
-        rev_on = bool_toggle("🔄 Mean Reversion", f"{strategy}_reversion_on", True)
-        bool_toggle("🚀 Breakout", f"{strategy}_breakout_on", True)
-        # Reversion tuning (global settings; only relevant when reversion is on).
-        # Backtest: RSI-extreme gate + fixed R:R is the only scalping edge found.
+    st.subheader("🧩 Strategy")
+    if strategy == "scalping":
+        rev_on = bool_toggle("🔄 Mean Reversion", "scalping_reversion_on", True)
         if rev_on:
             st.markdown("**🔄 Reversion tuning** (backtest: RSI<20 + R:R 1:3 = best)")
             ext = slider("RSI extreme gate — 0 = off · lower = stricter/fewer/better",
@@ -708,6 +689,9 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
             slider("Reversion R:R (TP = R × SL) — 0 = native TP",
                    "reversion_fixed_rr", 0.0, 4.0, 0.5,
                    db.get_float("reversion_fixed_rr", 0.0))
+    else:  # swing = breakout on the daily chart (the validated edge)
+        bool_toggle("🚀 Breakout", "swing_breakout_on", True)
+        st.caption("Swing trades 1d breakout only — the walk-forward + OOS validated edge.")
     # Section 5 — Risk Management
     st.divider()
     st.subheader("🛡️ Risk Management")
@@ -767,16 +751,6 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
         if rr < 1.5:
             st.warning(f"⚠️ R:R 1:{rr:.2f} is low — set TP ≥ {sl_pct*1.5:.1f}% to reach 1:1.5")
         st.caption(f"After 0.08% fee → Net TP {net_tp:.2f}% / Net SL {net_sl:.2f}% | R:R 1:{rr:.2f}")
-    bool_toggle("Auto Break-Even on TP1", f"{strategy}_auto_be", True)
-
-    # Trailing stop — distance is auto (ATR) when Auto TP/SL is on, manual slider otherwise.
-    trail_on = bool_toggle("📉 Trailing SL", f"{strategy}_trail_auto", False)
-    if trail_on:
-        if auto_tpsl:
-            st.caption("🤖 Auto trailing distance (adapts to ATR / volatility).")
-        else:
-            slider("Trailing distance %", f"{strategy}_trail_pct", 0.2, 5.0, 0.1,
-                   db.get_float(f"{strategy}_trail_pct", 1.5 if strategy == "swing" else 0.5))
 
     # Swing extras — Max Hold Days (force-close a swing trade after N days)
     if swing:
