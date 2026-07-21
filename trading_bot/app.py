@@ -659,14 +659,17 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
     st.divider()
     st.subheader("⏱️ Timeframe")
     auto_tf = bool_toggle("🤖 Auto Timeframe (bot decides)", f"{strategy}_auto_tf", True)
+    mtf_on = db.get_bool(f"{strategy}_mtf_filter", True)
     if auto_tf:
         preset = "Entry 5m · Confirm 15m · Trend 1h" if strategy == "scalping" \
                  else "Entry 1d · Confirm 3d · Trend 1w"
         st.caption(f"Bot auto → {preset}")
     else:
         tf_buttons("Entry TF", f"{strategy}_timeframe", entry_opts, db.get_setting(f"{strategy}_timeframe"))
-        tf_buttons("Confirm TF", f"{strategy}_confirm_tf", confirm_opts, db.get_setting(f"{strategy}_confirm_tf"))
-        tf_buttons("Trend TF", f"{strategy}_trend_tf", trend_opts, db.get_setting(f"{strategy}_trend_tf"))
+        # Confirm/Trend TF only matter when the MTF filter is on — hide otherwise.
+        if mtf_on:
+            tf_buttons("Confirm TF", f"{strategy}_confirm_tf", confirm_opts, db.get_setting(f"{strategy}_confirm_tf"))
+            tf_buttons("Trend TF", f"{strategy}_trend_tf", trend_opts, db.get_setting(f"{strategy}_trend_tf"))
     bool_toggle("MTF Filter", f"{strategy}_mtf_filter", True)
 
     # Section 3 — Strategy Mix
@@ -784,14 +787,6 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
         else:
             slider("Max Hold Days", "swing_max_hold_days", 1, 30, 1,
                    db.get_int("swing_max_hold_days", 7), is_int=True)
-
-    # Section 9 — Correlation Filter
-    st.divider()
-    st.subheader("🔗 Correlation Filter")
-    corr_on = bool_toggle("Correlation Filter", f"{strategy}_corr_filter", True)
-    if corr_on:
-        slider("Max same-direction trades", f"{strategy}_max_corr_trades", 1, 5, 1,
-               db.get_int(f"{strategy}_max_corr_trades", 2), is_int=True)
 
     # Section 10 — Live Trades
     st.divider()
