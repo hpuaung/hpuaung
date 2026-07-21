@@ -1166,7 +1166,8 @@ def main():
         tab_dashboard()
     with t2:
         engine_tab("scalping", "⚡ Scalping Engine",
-                   ["1m", "3m", "5m", "15m"], ["5m", "15m", "30m"], ["15m", "1h", "4h"])
+                   ["1m", "3m", "5m", "15m", "30m", "1h"], ["5m", "15m", "30m", "1h"],
+                   ["15m", "1h", "4h"])
     with t3:
         engine_tab("swing", "📈 Swing Engine",
                    ["1h", "4h", "1d"], ["4h", "1d"], ["1d", "3d", "1w"], swing=True)
