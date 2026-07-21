@@ -420,6 +420,32 @@ def get_today_trades():
     return [dict(r) for r in rows]
 
 
+def get_trades_on_date(date_str):
+    """All closed trades whose exit (or open) fell on date_str (YYYY-MM-DD, UTC)."""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM trades WHERE substr(COALESCE(exit_timestamp, timestamp),1,10)=? "
+        "ORDER BY id DESC",
+        (date_str,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_daily_pnl(days=14):
+    """Per-day rollup for the last `days` distinct trading days (newest first):
+    date, trade count, win count, net PnL — for a calendar-style history view."""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT substr(COALESCE(exit_timestamp, timestamp),1,10) AS d, "
+        "COUNT(*) AS n, "
+        "SUM(CASE WHEN COALESCE(net_pnl,0) > 0 THEN 1 ELSE 0 END) AS wins, "
+        "COALESCE(SUM(net_pnl),0) AS net "
+        "FROM trades GROUP BY d ORDER BY d DESC LIMIT ?",
+        (int(days),),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def clear_paper_trades():
     conn = get_conn()
     with _db_lock:

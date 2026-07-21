@@ -461,11 +461,55 @@ def tab_dashboard():
     st.subheader("🕐 Best Trading Hours (UTC)")
     _best_hours(_pm_filter)
 
-    # Section 10 — Export
+    # Section 10 — Trade History by Date (calendar)
+    st.subheader("📅 Trade History (by date)")
+    _history_calendar()
+
+    # Section 11 — Export
     st.subheader("📥 Export")
     csv_bytes = _trades_csv(_pm_filter)
     st.download_button("📥 Download Trade Report CSV", csv_bytes,
                        file_name="trade_report.csv", mime="text/csv")
+
+
+def _history_calendar():
+    """Calendar-style history: a per-day P&L rollup plus a date picker that shows
+    that day's closed trades. Today's numbers live in the per-engine 'Today Stats'
+    which auto-resets at 00:00 UTC; this is the archive of past days."""
+    daily = db.get_daily_pnl(30)
+    if not daily:
+        st.caption("No closed trades yet — history fills in as trades close.")
+        return
+    # per-day rollup table (newest first)
+    rollup = [{
+        "Date": d["d"],
+        "Trades": d["n"],
+        "Win%": f"{(100*d['wins']//d['n']) if d['n'] else 0}%",
+        "Net PnL": f"${d['net']:+.2f}",
+    } for d in daily]
+    st.caption("Daily P&L (last 30 trading days) — each day is a fresh tally.")
+    st.dataframe(rollup, use_container_width=True, hide_index=True)
+
+    # date picker -> that day's trades
+    dates = [d["d"] for d in daily]
+    pick = st.selectbox("📆 View a specific day's trades", dates, index=0, key="hist_date")
+    day_trades = db.get_trades_on_date(pick)
+    if not day_trades:
+        st.caption("No trades on that day.")
+        return
+    net = sum(float(t.get("net_pnl") or 0) for t in day_trades)
+    wins = sum(1 for t in day_trades if float(t.get("net_pnl") or 0) > 0)
+    st.write(f"**{pick}** — {len(day_trades)} trades · {100*wins//len(day_trades)}% win "
+             f"· Net **${net:+.2f}**")
+    rows = [{
+        "Pair": t.get("symbol"),
+        "Engine": t.get("strategy"),
+        "Side": t.get("side"),
+        "Net": f"${float(t.get('net_pnl') or 0):+.2f}",
+        "Reason": t.get("close_reason"),
+        "Closed": (t.get("exit_timestamp") or "")[11:19],
+    } for t in day_trades]
+    st.dataframe(rows, use_container_width=True, hide_index=True)
 
 
 def _learning_progress():
@@ -824,6 +868,8 @@ def _today_stats(strategy):
     d[0].metric("Wins", len(wins))
     d[1].metric("Losses", len(trades) - len(wins))
     d[2].metric("Fees", f"${fees:,.2f}")
+    st.caption("↻ Resets automatically at 00:00 UTC (~6:30 AM MMT) each day. "
+               "Past days are archived in Dashboard → 📅 Trade History.")
 
 
 def _close_one(pos):
