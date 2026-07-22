@@ -887,17 +887,27 @@ def _place_test_trade(strategy):
 def tab_settings():
     st.subheader("⚙️ Settings")
 
-    # --- Master Auto Pilot -------------------------------------------------
-    ap = bool_toggle("🤖 AUTO PILOT — bot manages everything", "auto_pilot", False)
-    if ap:
-        st.success("🤖 **Auto Pilot ON** — the bot self-manages timeframe, AI "
-                   "threshold, risk sizing (from balance + win-rate), ATR TP/SL, "
-                   "trailing, break-even, max-hold, global risk caps and every "
-                   "adaptive win-rate filter. Individual toggles below are ignored "
-                   "while this is on. Turn it off to tune things manually.")
+    # --- Auto (proven config) vs Manual ------------------------------------
+    import proven_config
+    d = proven_config.drift()
+    if not d:
+        st.success("🔒 **AUTO — running the proven config.** Swing 1d breakout + "
+                   "scalping reversion (RSI<20, R:R 1:3) + validated risk limits. "
+                   "Every setting below is at its recommended value.")
     else:
-        st.caption("Off → each section's own Auto/Manual toggles apply. Turn on to "
-                   "let the bot run fully hands-off.")
+        st.warning(f"✏️ **MANUAL — {len(d)} setting(s) differ from the proven config.** "
+                   "Tune freely below, or press the button to snap back to Auto.")
+        with st.expander(f"see the {len(d)} changed setting(s)", expanded=False):
+            for k, cur, want in d[:40]:
+                st.caption(f"• `{k}` = {cur}  →  proven {want}")
+    if st.button("🔒 AUTO — Apply Proven Config (restore my recommended settings)",
+                 type="primary"):
+        n = proven_config.apply()
+        st.success(f"✅ Applied {n} proven settings (Auto). Takes effect on the next "
+                   "engine scan — no restart needed.")
+        st.rerun()
+    st.caption("AUTO = the backtest/walk-forward/OOS-validated settings I tuned. "
+               "MANUAL = change any slider/toggle below; the banner shows drift.")
     st.divider()
 
     with st.expander("🔌 1. API Configuration", expanded=False):
