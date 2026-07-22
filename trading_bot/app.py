@@ -887,31 +887,32 @@ def _place_test_trade(strategy):
 def tab_settings():
     st.subheader("⚙️ Settings")
 
-    # --- Swing Plan selector (3 walk-forward-validated deployments) ---------
+    # --- Swing Plan selector (swing slot only; scalping runs on its own) -----
     import swing_plans
-    st.markdown("### 📈 Swing Trading Plan")
-    active = swing_plans.active_plan()
+    st.markdown("### 📈 Swing Plan  (Scalping runs separately — see its tab)")
+    active = swing_plans.active_swing_plan()
     if active:
-        st.success(f"🔒 **Running Plan {active} — {swing_plans.PLAN_NAMES[active]}.** "
-                   f"{swing_plans.PLAN_DESC[active]}. Walk-forward validated.")
+        st.success(f"🔒 **Swing = Plan {active} ({swing_plans.PLAN_NAMES[active]}).** "
+                   f"{swing_plans.PLAN_DESC[active]}. Walk-forward robust.")
     else:
-        st.warning("✏️ **Custom settings** — not matching any validated plan. "
-                   "Pick a plan below to snap to a validated config.")
+        st.warning("✏️ **Swing = custom** — not matching any validated plan. "
+                   "Pick one below to snap to a validated swing config.")
     _plan_labels = {n: f"Plan {n} — {swing_plans.PLAN_NAMES[n]}: {swing_plans.PLAN_DESC[n]}"
                     for n in (1, 2, 3)}
     _pick = st.radio(
-        "Pick a plan (all run breakout-1d 1:3; they differ in the 2nd engine):",
+        "Pick your SWING strategy (this only sets the swing engine):",
         [1, 2, 3], format_func=lambda n: _plan_labels[n],
         index=((active - 1) if active in (1, 2, 3) else 0),
         key="swing_plan_pick")
-    if st.button(f"✅ Apply Plan {_pick}", type="primary", key="apply_swing_plan"):
-        swing_plans.apply_plan(_pick)
-        st.success(f"✅ Applied Plan {_pick} ({swing_plans.PLAN_NAMES[_pick]}). "
+    if st.button(f"✅ Apply Swing Plan {_pick}", type="primary", key="apply_swing_plan"):
+        swing_plans.apply_swing_plan(_pick)
+        st.success(f"✅ Swing set to Plan {_pick} ({swing_plans.PLAN_NAMES[_pick]}). "
                    "Takes effect on the next engine scan — no restart needed.")
         st.rerun()
-    st.caption("All three are walk-forward robust (edge held across 3 eras, newest "
-               "PF≥1.2). The 2nd engine slot (the 'Scalping' tab) runs the plan's "
-               "trend timeframe — 12h for Balanced, 6h for Max activity, off for Purist.")
+    st.caption("All three swing plans are walk-forward robust (edge held across 3 "
+               "eras, newest PF≥1.2). This selector changes ONLY the swing engine. "
+               "The Scalping engine (reversion RSI<20, 1:3) runs independently on "
+               "its own slot and is unaffected — tune it on the Scalping tab.")
     st.divider()
 
     with st.expander("🔌 1. API Configuration", expanded=False):
