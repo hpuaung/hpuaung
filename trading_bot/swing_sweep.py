@@ -79,7 +79,11 @@ def run_pair(df):
     pos = {(s, rr): None for s in STRATS for rr in RRS}
     trades = {(s, rr): [] for s in STRATS for rr in RRS}
     for i in range(WARMUP, n):
-        sub = df.iloc[:i + 1]
+        # Window (not full history): every strategy only reads the last <=50
+        # candles (breakout LOOKBACK=50; others read precomputed last-row
+        # indicators), so a fixed WARMUP-row window gives IDENTICAL signals while
+        # turning the per-candle cost from O(i) into O(WARMUP) — kills the O(n^2).
+        sub = df.iloc[i - WARMUP:i + 1]
         if not ind.has_enough(sub):
             continue
         tr = trend.run(sub, mtf=False)
@@ -143,17 +147,22 @@ print("=" * 78)
 for tf in TIMEFRAMES:
     agg = {(s, rr): [] for s in STRATS for rr in RRS}
     max_candles = 0
-    for sym in PAIRS:
+    print(f"\n[progress] {tf}: scanning {len(PAIRS)} pairs ...", flush=True)
+    for pi, sym in enumerate(PAIRS, 1):
         try:
             df = bc.get_ohlcv_deep(sym, tf, LIMIT, api_mode="real")
             if df is None or len(df) < WARMUP + 30:
+                print(f"[progress]   {tf} {pi}/{len(PAIRS)} {sym}: skip (thin)", flush=True)
                 continue
             max_candles = max(max_candles, len(df))
             df = ind.compute_indicators(df)
             t = run_pair(df)
             for k in agg:
                 agg[k] += t[k]
-        except Exception:  # noqa: BLE001
+            print(f"[progress]   {tf} {pi}/{len(PAIRS)} {sym}: {len(df)} candles done",
+                  flush=True)
+        except Exception as _e:  # noqa: BLE001
+            print(f"[progress]   {tf} {pi}/{len(PAIRS)} {sym}: err {str(_e)[:30]}", flush=True)
             continue
     span_days = max_candles * TF_HOURS.get(tf, 1) / 24.0
     print(f"\n==== {tf}  (~{max_candles} candles/pair ≈ {span_days:.0f} days history) ====")
