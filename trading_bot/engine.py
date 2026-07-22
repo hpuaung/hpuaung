@@ -282,6 +282,20 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
                 signal["sl"] = _entry + _mult * _atr
 
     # -----------------------------------------------------------------------
+    # Fixed R:R (walk-forward validated). Override TP1 to a clean fixed R:R off
+    # the FINAL sl, for whichever strategy fired. The swing sweep + walk-forward
+    # showed breakout-1d and trend-6h/12h only clear the edge bar (and stay
+    # robust across eras) at a forced 1:3 R:R — their native TPs are smaller /
+    # era-dependent. Realise it here instead of each strategy's own TP. Active
+    # only when {strategy}_fixed_rr > 0 (0 = keep the strategy's native TP).
+    # -----------------------------------------------------------------------
+    _frr = db.get_float(f"{strategy}_fixed_rr", 0.0)
+    if _frr > 0 and signal.get("signal") in ("BUY", "SELL"):
+        _e = float(signal["entry"]); _sl = float(signal["sl"])
+        _d = 1 if signal["signal"] == "BUY" else -1
+        signal["tp1"] = _e + _d * _frr * abs(_e - _sl)
+
+    # -----------------------------------------------------------------------
     # Risk:Reward filter — skip entries where potential loss > potential gain.
     # Trades with inverted R:R drag down PnL even at 50%+ win rates.
     # -----------------------------------------------------------------------

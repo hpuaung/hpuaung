@@ -887,27 +887,31 @@ def _place_test_trade(strategy):
 def tab_settings():
     st.subheader("⚙️ Settings")
 
-    # --- Auto (proven config) vs Manual ------------------------------------
-    import proven_config
-    d = proven_config.drift()
-    if not d:
-        st.success("🔒 **AUTO — running the proven config.** Swing 1d breakout + "
-                   "scalping reversion (RSI<20, R:R 1:3) + validated risk limits. "
-                   "Every setting below is at its recommended value.")
+    # --- Swing Plan selector (3 walk-forward-validated deployments) ---------
+    import swing_plans
+    st.markdown("### 📈 Swing Trading Plan")
+    active = swing_plans.active_plan()
+    if active:
+        st.success(f"🔒 **Running Plan {active} — {swing_plans.PLAN_NAMES[active]}.** "
+                   f"{swing_plans.PLAN_DESC[active]}. Walk-forward validated.")
     else:
-        st.warning(f"✏️ **MANUAL — {len(d)} setting(s) differ from the proven config.** "
-                   "Tune freely below, or press the button to snap back to Auto.")
-        with st.expander(f"see the {len(d)} changed setting(s)", expanded=False):
-            for k, cur, want in d[:40]:
-                st.caption(f"• `{k}` = {cur}  →  proven {want}")
-    if st.button("🔒 AUTO — Apply Proven Config (restore my recommended settings)",
-                 type="primary"):
-        n = proven_config.apply()
-        st.success(f"✅ Applied {n} proven settings (Auto). Takes effect on the next "
-                   "engine scan — no restart needed.")
+        st.warning("✏️ **Custom settings** — not matching any validated plan. "
+                   "Pick a plan below to snap to a validated config.")
+    _plan_labels = {n: f"Plan {n} — {swing_plans.PLAN_NAMES[n]}: {swing_plans.PLAN_DESC[n]}"
+                    for n in (1, 2, 3)}
+    _pick = st.radio(
+        "Pick a plan (all run breakout-1d 1:3; they differ in the 2nd engine):",
+        [1, 2, 3], format_func=lambda n: _plan_labels[n],
+        index=((active - 1) if active in (1, 2, 3) else 0),
+        key="swing_plan_pick")
+    if st.button(f"✅ Apply Plan {_pick}", type="primary", key="apply_swing_plan"):
+        swing_plans.apply_plan(_pick)
+        st.success(f"✅ Applied Plan {_pick} ({swing_plans.PLAN_NAMES[_pick]}). "
+                   "Takes effect on the next engine scan — no restart needed.")
         st.rerun()
-    st.caption("AUTO = the backtest/walk-forward/OOS-validated settings I tuned. "
-               "MANUAL = change any slider/toggle below; the banner shows drift.")
+    st.caption("All three are walk-forward robust (edge held across 3 eras, newest "
+               "PF≥1.2). The 2nd engine slot (the 'Scalping' tab) runs the plan's "
+               "trend timeframe — 12h for Balanced, 6h for Max activity, off for Purist.")
     st.divider()
 
     with st.expander("🔌 1. API Configuration", expanded=False):
