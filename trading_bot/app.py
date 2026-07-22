@@ -991,15 +991,18 @@ def tab_settings():
             slider("Max Drawdown Pause %", "max_drawdown_pause_pct", 10.0, 50.0, 1.0,
                    db.get_float("max_drawdown_pause_pct", 25.0))
             if not g_auto:
-                slider("Max Concurrent Trades", "max_concurrent_trades", 1, 10, 1,
+                slider("Max Concurrent Trades", "max_concurrent_trades", 1, 40, 1,
                        db.get_int("max_concurrent_trades", 5), is_int=True)
             slider("Lev×Risk Hard Cap %", "lev_risk_hard_cap_pct", 5.0, 20.0, 0.5,
                    db.get_float("lev_risk_hard_cap_pct", 10.0))
             if not g_auto:
-                slider("Min Risk:Reward Ratio", "min_rr_ratio", 1.0, 3.0, 0.1,
-                       db.get_float("min_rr_ratio", 2.0))
+                # min 0.2 so the breakout-1d config (tight SL, R:R sometimes < 1)
+                # is representable — a 1.0 floor here silently blocks breakout entries.
+                slider("Min Risk:Reward Ratio", "min_rr_ratio", 0.2, 3.0, 0.1,
+                       db.get_float("min_rr_ratio", 0.3))
                 st.caption("Skip entries where TP1 distance < this × SL distance. "
-                           "2.0 = TP must be 2× further than SL. Fixes inverted R:R.")
+                           "Keep LOW (0.3) — breakout's SL sits at the broken level "
+                           "(tight), so a high floor blocks every breakout entry.")
                 slider("Min TP Distance % (fee floor)", "min_tp_pct", 0.0, 2.0, 0.05,
                        db.get_float("min_tp_pct", 0.4))
                 st.caption("Skip entries whose TP1 target is closer than this %. "
