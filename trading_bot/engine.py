@@ -515,15 +515,23 @@ def _run_cycle():
         _update_snapshot(db.get_float("last_equity", 0.0), equity_mode, _selected_pairs())
         return
 
-    try:
-        real_equity = bc.get_equity(equity_mode)
-        db.save_setting("binance_conn", "1")
-        db.save_setting("binance_conn_msg", f"Connected ({equity_mode})")
-    except Exception as e:  # noqa: BLE001
-        db.log_event("EQUITY_ERROR", str(e))
-        db.save_setting("binance_conn", "0")
-        db.save_setting("binance_conn_msg", f"Not connected: {e}")
+    if not bc.has_credentials(equity_mode):
+        # Paper with no API keys: balance is simulated. Don't call the private
+        # equity endpoint (it needs a secret) — that only spammed EQUITY_ERROR
+        # every cycle. Public klines still work, so trading is unaffected.
         real_equity = db.get_float("starting_balance", 0.0)
+        db.save_setting("binance_conn", "1")
+        db.save_setting("binance_conn_msg", "Paper — simulated balance (no keys)")
+    else:
+        try:
+            real_equity = bc.get_equity(equity_mode)
+            db.save_setting("binance_conn", "1")
+            db.save_setting("binance_conn_msg", f"Connected ({equity_mode})")
+        except Exception as e:  # noqa: BLE001
+            db.log_event("EQUITY_ERROR", str(e))
+            db.save_setting("binance_conn", "0")
+            db.save_setting("binance_conn_msg", f"Not connected: {e}")
+            real_equity = db.get_float("starting_balance", 0.0)
 
     # Seed the starting capital once from the real wallet.
     if db.get_float("starting_balance", 0.0) <= 0 and real_equity > 0:
