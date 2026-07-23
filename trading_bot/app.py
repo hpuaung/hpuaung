@@ -244,6 +244,24 @@ def live_price(symbol, api_mode=None):
     return float(_snapshot_prices().get(symbol, 0.0) or 0.0)
 
 
+def paper_unrealized():
+    """Live (floating) P&L of all OPEN paper positions, marked to the engine's
+    price snapshot. This is what makes EQUITY move while trades are still open —
+    the realized Paper Balance only changes when a trade CLOSES."""
+    total = 0.0
+    for p in db.get_open_positions():
+        if db.get_setting(f"{p.get('strategy', '')}_mode", "paper") == "real":
+            continue  # real positions don't affect the paper wallet
+        px = live_price(p.get("symbol"))
+        entry = float(p.get("entry_price") or 0.0)
+        qty = float(p.get("entry_qty") or 0.0)
+        if px <= 0 or entry <= 0 or qty <= 0:
+            continue
+        d = 1.0 if p.get("side") == "BUY" else -1.0
+        total += (px - entry) * qty * d
+    return total
+
+
 def _conn_badge(mode):
     """Persistent 🟢/🔴 connection status badge for an API mode ('test'/'live')."""
     creds_mode = "test" if mode == "test" else "real"
@@ -347,15 +365,28 @@ def tab_dashboard():
         scalp_lbl = "⚡ Scalp=REAL" if scalp_real else "⚡ Scalp=Paper"
         swing_lbl = "📈 Swing=REAL" if swing_real else "📈 Swing=Paper"
         st.caption(f"Mixed mode: {scalp_lbl} | {swing_lbl} — Health based on Real balance")
-    else:
+    elif any_real:
         b1, b2 = st.columns(2)
-        if any_real:
-            b1.metric("💰 Real Balance", f"${primary_bal:,.2f}",
-                      f"{primary_bal - starting:+,.2f} vs start")
-        else:
-            b1.metric("📒 Paper Balance", f"${paper_bal:,.2f}",
-                      f"{paper_bal - starting:+,.2f} all-time")
+        b1.metric("💰 Real Balance", f"${primary_bal:,.2f}",
+                  f"{primary_bal - starting:+,.2f} vs start")
         b2.metric("Today PnL", f"${pnl:,.2f}", f"{pnl_pct:+.2f}%")
+    else:
+        # Paper: Balance is realized-only (moves on CLOSE); Equity = Balance +
+        # open positions' live floating P&L (moves in real time as prices tick).
+        unrl = paper_unrealized()
+        equity = paper_bal + unrl
+        b1, b2 = st.columns(2)
+        b1.metric("📒 Paper Balance", f"${paper_bal:,.2f}",
+                  f"{paper_bal - starting:+,.2f} all-time")
+        b2.metric("💵 Equity (live)", f"${equity:,.2f}",
+                  f"{unrl:+,.2f} open P&L")
+        b3, b4 = st.columns(2)
+        b3.metric("📈 Open P&L", f"${unrl:+,.2f}", "unrealized", delta_color="off")
+        b4.metric("Today PnL", f"${pnl:,.2f}", f"{pnl_pct:+.2f}%")
+        st.caption("**Balance** = realized cash — moves only when a trade CLOSES. "
+                   "**Open P&L** = live floating profit/loss of open positions. "
+                   "**Equity = Balance + Open P&L** — this is the number that moves "
+                   "in real time while positions are open.")
 
     # Real wallet balances are shown ONLY when the matching API keys exist.
     wallet = []
