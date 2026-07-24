@@ -124,9 +124,18 @@ def _init(ss_key, value):
         st.session_state[ss_key] = value
 
 
+def _sync(ss_key, value):
+    # Live (non-form) widgets re-read the DB every render, so an external write
+    # (Swing Plan apply, another device, AUTO) shows here instead of a stale
+    # session value that would be saved back and REVERT the change. Form widgets
+    # keep once-only init so in-progress edits survive until submit.
+    if _FORM is None or ss_key not in st.session_state:
+        st.session_state[ss_key] = value
+
+
 def bool_toggle(label, key, default=False):
     ss = f"w_{key}"
-    _init(ss, db.get_bool(key, default))
+    _sync(ss, db.get_bool(key, default))
     if _FORM is None:
         st.toggle(label, key=ss,
                   on_change=lambda: db.save_setting(key, "1" if st.session_state[ss] else "0"))
@@ -139,7 +148,7 @@ def bool_toggle(label, key, default=False):
 def slider(label, key, lo, hi, step, default, is_int=False):
     ss = f"w_{key}"
     cur = db.get_int(key, int(default)) if is_int else db.get_float(key, float(default))
-    _init(ss, cur)
+    _sync(ss, cur)
     if _FORM is None:
         st.slider(label, lo, hi, key=ss, step=step,
                   on_change=lambda: db.save_setting(key, st.session_state[ss]))
@@ -152,7 +161,7 @@ def slider(label, key, lo, hi, step, default, is_int=False):
 def number(label, key, default, is_int=False):
     ss = f"w_{key}"
     cur = db.get_int(key, int(default)) if is_int else db.get_float(key, float(default))
-    _init(ss, cur)
+    _sync(ss, cur)
     if _FORM is None:
         st.number_input(label, key=ss,
                         on_change=lambda: db.save_setting(key, st.session_state[ss]))
@@ -183,7 +192,7 @@ def text(label, key, password=False, default="", show_saved=False):
 def select(label, key, options, default):
     ss = f"w_{key}"
     cur = db.get_setting(key, default)
-    _init(ss, cur if cur in options else default)
+    _sync(ss, cur if cur in options else default)
     if _FORM is None:
         st.selectbox(label, options, key=ss,
                      on_change=lambda: db.save_setting(key, st.session_state[ss]))
@@ -686,28 +695,41 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
     st.caption("Test Trade opens a small PAPER position now so you can watch the "
                "full lifecycle (entry → TP/SL/trail → close). For verification only.")
 
-    # Section 2 — Timeframe
+    # Section 2/3 — Timeframe & Strategy
     st.divider()
-    st.subheader("⏱️ Timeframe")
-    auto_tf = bool_toggle("🤖 Auto Timeframe (bot decides)", f"{strategy}_auto_tf", True)
-    mtf_on = db.get_bool(f"{strategy}_mtf_filter", True)
-    if auto_tf:
-        preset = "Entry 5m · Confirm 15m · Trend 1h" if strategy == "scalping" \
-                 else "Entry 1d · Confirm 3d · Trend 1w"
-        st.caption(f"Bot auto → {preset}")
+    if swing:
+        # Swing strategy + timeframe are owned by the 📈 Swing Plan selector on
+        # the Settings tab. Show them READ-ONLY here so the two surfaces can never
+        # disagree — the old manual Breakout toggle + 1h/4h/1d buttons here fought
+        # the plan (which uses trend-12h / trend-6h) and reverted it.
+        import swing_plans
+        st.subheader("⏱️ Timeframe & Strategy")
+        ap = swing_plans.active_swing_plan()
+        tf_now = db.get_setting("swing_timeframe", "1d")
+        strat_now = ("Trend" if db.get_bool("swing_trend_on")
+                     else "Breakout" if db.get_bool("swing_breakout_on") else "—")
+        planlbl = (f"Swing Plan {ap} — {swing_plans.PLAN_NAMES[ap]}" if ap
+                   else "custom (not matching a validated plan)")
+        st.success(f"📈 **{strat_now} · {tf_now} · R:R 1:3**")
+        st.caption(f"Running **{planlbl}**. Strategy & timeframe are set by the "
+                   "**📈 Swing Plan** selector on the ⚙️ Settings tab — change them "
+                   "there, not here, so the two never disagree.")
     else:
-        tf_buttons("Entry TF", f"{strategy}_timeframe", entry_opts, db.get_setting(f"{strategy}_timeframe"))
-        # Confirm/Trend TF only matter when the MTF filter is on — hide otherwise.
-        if mtf_on:
-            tf_buttons("Confirm TF", f"{strategy}_confirm_tf", confirm_opts, db.get_setting(f"{strategy}_confirm_tf"))
-            tf_buttons("Trend TF", f"{strategy}_trend_tf", trend_opts, db.get_setting(f"{strategy}_trend_tf"))
-    bool_toggle("MTF Filter", f"{strategy}_mtf_filter", True)
+        st.subheader("⏱️ Timeframe")
+        auto_tf = bool_toggle("🤖 Auto Timeframe (bot decides)", f"{strategy}_auto_tf", True)
+        mtf_on = db.get_bool(f"{strategy}_mtf_filter", True)
+        if auto_tf:
+            st.caption("Bot auto → Entry 5m · Confirm 15m · Trend 1h")
+        else:
+            tf_buttons("Entry TF", f"{strategy}_timeframe", entry_opts, db.get_setting(f"{strategy}_timeframe"))
+            # Confirm/Trend TF only matter when the MTF filter is on — hide otherwise.
+            if mtf_on:
+                tf_buttons("Confirm TF", f"{strategy}_confirm_tf", confirm_opts, db.get_setting(f"{strategy}_confirm_tf"))
+                tf_buttons("Trend TF", f"{strategy}_trend_tf", trend_opts, db.get_setting(f"{strategy}_trend_tf"))
+        bool_toggle("MTF Filter", f"{strategy}_mtf_filter", True)
 
-    # Section 3 — Strategy (each engine runs its ONE proven strategy; the losing
-    # strategies + AI Hybrid are removed to keep the tab focused).
-    st.divider()
-    st.subheader("🧩 Strategy")
-    if strategy == "scalping":
+        st.divider()
+        st.subheader("🧩 Strategy")
         rev_on = bool_toggle("🔄 Mean Reversion", "scalping_reversion_on", True)
         if rev_on:
             st.markdown("**🔄 Reversion tuning** (backtest: RSI<20 + R:R 1:3 = best)")
@@ -720,9 +742,6 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
             slider("Reversion R:R (TP = R × SL) — 0 = native TP",
                    "reversion_fixed_rr", 0.0, 4.0, 0.5,
                    db.get_float("reversion_fixed_rr", 0.0))
-    else:  # swing = breakout on the daily chart (the validated edge)
-        bool_toggle("🚀 Breakout", "swing_breakout_on", True)
-        st.caption("Swing trades 1d breakout only — the walk-forward + OOS validated edge.")
     # Section 5 — Risk Management
     st.divider()
     st.subheader("🛡️ Risk Management")
@@ -765,10 +784,14 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
     # Section 6 — Take Profit / Stop Loss
     st.divider()
     st.subheader("🎯 Take Profit / Stop Loss")
-    auto_tpsl = bool_toggle("🤖 Auto TP/SL (ATR-based)", f"{strategy}_auto_tpsl", True)
+    auto_tpsl = bool_toggle("🤖 Auto TP/SL", f"{strategy}_auto_tpsl", True)
     if auto_tpsl:
-        st.caption("🤖 Auto sets TP1/TP2/TP3 & SL from market volatility (ATR), "
-                   "with partial closes at 50/30/20%.")
+        _atr = db.get_bool("atr_sl_enabled", False)
+        _part = db.get_bool(f"{strategy}_partial_tp", False)
+        _sl_src = "ATR volatility" if _atr else "the strategy's structural SL"
+        _tp_src = ("partial closes at 50/30/20%" if _part
+                   else "one full close at the fixed R:R 1:3 target")
+        st.caption(f"🤖 Auto → SL from {_sl_src}; TP via {_tp_src}.")
     else:
         rec_sl = 0.8 if strategy == "scalping" else 2.5
         rec_tp = rec_sl * 2
