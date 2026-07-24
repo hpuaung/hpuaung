@@ -883,6 +883,7 @@ _ENV_MAP = {
     "GNEWS_API": "gnews_api",
     "TELEGRAM_TOKEN": "telegram_token",
     "TELEGRAM_CHAT_ID": "telegram_chat_id",
+    "CLAUDE_API_KEY": "claude_api_key",
 }
 
 

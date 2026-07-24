@@ -1013,10 +1013,17 @@ def tab_settings():
         st.caption(f"HF this month: {news.hf_requests_month()}/30000 | "
                    f"Status: {'🟢 connected' if hf_ok else '🔴 no token'}")
         if st.button("💾 Save News/AI Keys"):
+            # Force-persist from the widgets first (the old button only notified
+            # Telegram and relied on on_change, so mobile edits could be lost).
+            for _k in ("gnews_api", "hf_token"):
+                _v = st.session_state.get(f"w_{_k}")
+                if _v:
+                    db.save_setting(_k, _v)
             tg.send_message("📰 <b>News/AI keys saved</b> "
                             f"(GNews {'✅' if db.get_setting('gnews_api') else '—'}, "
-                            f"HF {'✅' if hf_ok else '—'})")
+                            f"HF {'✅' if db.get_setting('hf_token') else '—'})")
             st.success("Saved ✅ (Telegram notified)")
+            st.rerun()
 
         st.markdown("---")
         st.markdown("**🤖 Claude AI Monitor** (4-hour auto analysis)")
@@ -1123,6 +1130,15 @@ def tab_settings():
     with st.expander("📱 6. Telegram", expanded=False):
         text("Bot Token", "telegram_token", password=True, show_saved=True)
         text("Chat ID", "telegram_chat_id", password=True, show_saved=True)
+        if st.button("💾 Save Telegram Keys"):
+            # Force-persist from the widgets — on mobile the per-field on_change
+            # can miss the last keystrokes, which is why the keys seemed to "revert".
+            for _k in ("telegram_token", "telegram_chat_id"):
+                _v = st.session_state.get(f"w_{_k}")
+                if _v:  # never wipe a saved key with a blank box
+                    db.save_setting(_k, _v)
+            st.success("✅ Telegram keys saved (persist across restarts).")
+            st.rerun()
         bool_toggle("Notify Trade Open (entry)", "notify_trade_open", True)
         bool_toggle("Notify Trade Close", "notify_trade_close", True)
         bool_toggle("Notify Daily Report (00:00 UTC)", "notify_daily_report", True)
