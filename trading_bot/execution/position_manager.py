@@ -21,15 +21,32 @@ from execution import orders, risk_guard
 TAKER_FEE = 0.0004
 
 # Entry-timeframe -> minutes, used to size the post-SL re-entry cooldown.
+# NOTE: every timeframe an engine can run MUST be here. A missing key fell back
+# to the 15-minute default, so a 12h swing trade re-entered every 15 min inside
+# the same (unchanged) candle — one pair stopped out 11x in a row (-$9). 8h/12h
+# were the gaps.
 _TF_MINUTES = {"1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30, "1h": 60,
-               "2h": 120, "4h": 240, "6h": 360, "1d": 1440, "3d": 4320, "1w": 10080}
+               "2h": 120, "4h": 240, "6h": 360, "8h": 480, "12h": 720,
+               "1d": 1440, "3d": 4320, "1w": 10080}
+
+
+def _tf_to_minutes(tf):
+    """Entry candle length in minutes. Falls back to PARSING the string (e.g.
+    '12h' -> 720) instead of a fixed 15 so a timeframe missing from the table can
+    never again shrink the cooldown to 15 min and cause re-entry spirals."""
+    if tf in _TF_MINUTES:
+        return _TF_MINUTES[tf]
+    try:
+        return int(tf[:-1]) * {"m": 1, "h": 60, "d": 1440, "w": 10080}[tf[-1]]
+    except Exception:  # noqa: BLE001
+        return 15
 
 
 def _set_sl_cooldown(pos):
     """After a stop loss, block re-entry on this symbol+strategy for roughly one
     entry candle so the unchanged signal does not immediately re-fire."""
     tf = pos.get("timeframe", "5m")
-    mins = max(_TF_MINUTES.get(tf, 15), 15)  # 15-minute floor for fast scalps
+    mins = max(_tf_to_minutes(tf), 15)  # 15-minute floor for fast scalps
     until = datetime.now(timezone.utc) + timedelta(minutes=mins)
     db.save_setting(f"cooldown_{pos['strategy']}_{pos['symbol']}",
                     until.strftime("%Y-%m-%d %H:%M:%S"))
