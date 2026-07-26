@@ -953,10 +953,14 @@ def tab_settings():
                    "Pick one below to snap to a validated swing config.")
     _plan_labels = {n: f"Plan {n} — {swing_plans.PLAN_NAMES[n]}: {swing_plans.PLAN_DESC[n]}"
                     for n in (1, 2, 3)}
+    # Seed the radio ONCE from the active plan, then let the user pick freely.
+    # (Passing index= derived from `active` every render fought the user's tap and
+    # snapped it back to the running plan — you could never move off Plan 2.)
+    if "swing_plan_pick" not in st.session_state:
+        st.session_state["swing_plan_pick"] = active if active in (1, 2, 3) else 1
     _pick = st.radio(
         "Pick your SWING strategy (this only sets the swing engine):",
         [1, 2, 3], format_func=lambda n: _plan_labels[n],
-        index=((active - 1) if active in (1, 2, 3) else 0),
         key="swing_plan_pick")
     if st.button(f"✅ Apply Swing Plan {_pick}", type="primary", key="apply_swing_plan"):
         swing_plans.apply_swing_plan(_pick)
