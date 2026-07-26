@@ -814,7 +814,25 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
                        "stays open forever).")
         else:
             slider("Max Hold Days", "swing_max_hold_days", 1, 30, 1,
-                   db.get_int("swing_max_hold_days", 7), is_int=True)
+                   db.get_int("swing_max_hold_days", 30), is_int=True)
+
+    # Section 9 — Smart time/learning filters (opt-in; default OFF so activity is
+    # NOT reduced unless the user deliberately chooses quality over quantity).
+    st.divider()
+    st.subheader("🕐 Smart Filters (time edge — optional)")
+    st.caption("**OFF by default.** When ON, the bot SKIPS entries in contexts "
+               "where its OWN closed-trade history shows a poor win rate — higher "
+               "quality but FEWER entries. Each needs 10+ trades in that context "
+               "before it activates, so early on it changes nothing.")
+    bool_toggle("🕐 Best-hours filter — skip UTC hours that keep losing",
+                f"{strategy}_hour_filter", False)
+    bool_toggle("🌏 Session×pair filter — skip losing session+pair combos",
+                f"{strategy}_session_pair_filter", False)
+    bool_toggle("↕️ Direction filter — skip a losing BUY/SELL side on a pair",
+                f"{strategy}_dir_filter", False)
+    st.caption("These answer \"which time / direction is worth trading\" from the "
+               "bot's real results. ON = fewer, higher-quality entries · OFF = "
+               "maximum activity (recommended until you have plenty of trades).")
 
     # Section 10 — Live Trades
     st.divider()
