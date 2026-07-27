@@ -136,17 +136,15 @@ def _record_close(pos, qty, exit_price, reason, notifier=None):
     }
     db.insert_trade(trade)
     risk_guard.update_streak(net)
-    # Start a re-entry cooldown after any non-profitable close so the same
-    # unchanged entry signal does not immediately re-fire on the same candle.
-    # Originally only SL triggered this, but break-even / tiny-loss TP and losing
-    # Trail exits re-fired too (e.g. the XRP scalp that opened twice in 3 min on
-    # 2026-06-15, after the SL-only cooldown was added). Winning closes are exempt
-    # so a genuinely strong trend can still be re-entered.
-    if net <= 0:
-        try:
-            _set_sl_cooldown(pos)
-        except Exception:  # noqa: BLE001
-            pass
+    # Re-entry cooldown after EVERY close — one entry candle, win OR loss.
+    # Exempting winners let a WINNING phantom re-fire every scan: ETC re-entered
+    # ~250x in a night, compounding a fake +$790. A genuine trend is still
+    # re-enterable on the NEXT candle, which is all a swing/scalp needs; nothing
+    # legitimate needs to re-open the same pair 48 seconds after closing.
+    try:
+        _set_sl_cooldown(pos)
+    except Exception:  # noqa: BLE001
+        pass
     # Self-learning: pair the entry features with the win/loss outcome.
     feats = pos.get("entry_features")
     if feats:

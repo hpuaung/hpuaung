@@ -43,8 +43,27 @@ def _sizing(symbol, strategy, signal, equity, multiplier, api_mode):
         return {"blocked": reason}
 
     filters = bc.get_filters(symbol, api_mode)
-    entry = float(signal["entry"])
+
+    # Enter at the LIVE price, not the signal's candle-close. On higher timeframes
+    # that close can be HOURS old; opening there while the market has already moved
+    # made the position instant-close (0.0h) and re-fire every scan — a phantom
+    # spiral that "won" 250x on ETC / "lost" 11x on AAVE and faked a +$790 balance.
+    # Shift SL/TP by the same offset so the SL distance and R:R are preserved
+    # exactly and the trade can never instant-close.
+    sig_entry = float(signal["entry"])
     sl = float(signal["sl"])
+    tp1 = float(signal["tp1"]); tp2 = float(signal["tp2"]); tp3 = float(signal["tp3"])
+    try:
+        live = bc.get_price(symbol, api_mode)
+    except Exception:  # noqa: BLE001
+        live = 0.0
+    if live and live > 0:
+        off = live - sig_entry
+        entry = live
+        sl += off; tp1 += off; tp2 += off; tp3 += off
+    else:
+        entry = sig_entry
+
     sl_distance = abs(entry - sl)
     if sl_distance <= 0:
         return {"blocked": "SL distance is zero"}
@@ -64,9 +83,9 @@ def _sizing(symbol, strategy, signal, equity, multiplier, api_mode):
         "qty": qty,
         "entry": bc.round_price(entry, filters["tickSize"]),
         "sl": bc.round_price(sl, filters["tickSize"]),
-        "tp1": bc.round_price(float(signal["tp1"]), filters["tickSize"]),
-        "tp2": bc.round_price(float(signal["tp2"]), filters["tickSize"]),
-        "tp3": bc.round_price(float(signal["tp3"]), filters["tickSize"]),
+        "tp1": bc.round_price(tp1, filters["tickSize"]),
+        "tp2": bc.round_price(tp2, filters["tickSize"]),
+        "tp3": bc.round_price(tp3, filters["tickSize"]),
         "filters": filters,
     }
 
