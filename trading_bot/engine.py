@@ -222,7 +222,7 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
                   if not paper_mode else db.get_float("starting_balance", equity) or equity)
     guards = [
         risk_guard.apply_health_guard(equity, _start_bal, strategy)[:2],
-        risk_guard.apply_daily_loss_guard(equity),
+        risk_guard.apply_daily_loss_guard(equity, paper_mode),
         risk_guard.apply_blackout_guard(),
         risk_guard.apply_correlation_guard(signal["signal"], strategy),
         risk_guard.apply_session_filter(strategy),
@@ -472,7 +472,15 @@ def _maybe_status():
 
 
 def _enforce_health(equity):
-    starting = db.get_float("starting_balance", equity)
+    # In real mode `equity` is the live wallet, so it must be measured against the
+    # REAL starting balance — not the paper baseline (which would force-stop a
+    # healthy real account and cancel its live stops, or mask a real drawdown).
+    any_real = (db.get_setting("swing_mode", "paper") == "real" or
+                db.get_setting("scalping_mode", "paper") == "real")
+    if any_real:
+        starting = db.get_float("real_starting_balance", 0.0) or equity
+    else:
+        starting = db.get_float("starting_balance", equity)
     health = risk_guard.health_ratio(equity, starting)
     if health < 25:
         if db.get_bool("scalping_bot_on") or db.get_bool("swing_bot_on"):

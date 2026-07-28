@@ -59,14 +59,16 @@ def apply_health_guard(equity, starting_balance, strategy):
 # ---------------------------------------------------------------------------
 # Daily loss guard
 # ---------------------------------------------------------------------------
-def today_pnl():
-    trades = db.get_today_trades()
+def today_pnl(paper_mode=None):
+    trades = db.get_today_trades(paper_mode=paper_mode)
     return sum(float(t.get("net_pnl") or 0.0) for t in trades)
 
 
-def apply_daily_loss_guard(equity):
+def apply_daily_loss_guard(equity, paper_mode=None):
+    # paper_mode isolates this engine's ledger — a real engine's daily-loss
+    # circuit breaker must not be defeated (or falsely tripped) by paper PnL.
     limit_pct = db.get_float("daily_loss_limit_pct", 10.0)
-    pnl = today_pnl()
+    pnl = today_pnl(paper_mode=paper_mode)
     if equity > 0 and pnl < 0 and (abs(pnl) / equity * 100.0) >= limit_pct:
         return False, f"Daily loss {abs(pnl)/equity*100:.1f}% >= {limit_pct:.0f}%"
     return True, ""

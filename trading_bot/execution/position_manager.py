@@ -162,23 +162,38 @@ def _record_close(pos, qty, exit_price, reason, notifier=None):
 
 
 def _real_close(pos, qty, api_mode):
-    """Cancel remaining protective orders and market-close `qty` (real mode)."""
+    """Market-close `qty` (real mode). Returns True on success, False on failure."""
     try:
         orders.market_close(pos["symbol"], pos["side"], qty, api_mode)
+        return True
     except Exception as e:  # noqa: BLE001
         db.log_event("CLOSE_ERROR", f"{pos['symbol']}: {e}")
+        return False
 
 
 def _close_full(pos, exit_price, reason, api_mode, notifier=None):
     """Close the remaining fraction and remove the active position."""
-    qty = round(float(pos["entry_qty"]) * _remaining_fraction(pos), 8)
+    qty = float(pos["entry_qty"]) * _remaining_fraction(pos)
     if not pos.get("paper_mode"):
+        # Truncate to the symbol's LOT_SIZE step — a round()'d fraction is almost
+        # never a valid multiple, so Binance would reject the close.
+        try:
+            qty = bc.truncate_qty(qty, bc.get_filters(pos["symbol"], api_mode)["stepSize"])
+        except Exception:  # noqa: BLE001
+            qty = round(qty, 8)
+        # Close FIRST; only cancel the protective SL/TP and drop the position row
+        # if the close actually SUCCEEDED. Cancelling the stops before a close
+        # that then fails would leave a NAKED real position with unbounded risk.
+        if qty > 0 and not _real_close(pos, qty, api_mode):
+            db.log_event("CLOSE_FAILED",
+                         f"{pos['symbol']} real close failed — position + stops kept, retry next scan")
+            return
         try:
             orders.cancel_all_orders(pos["symbol"], api_mode)
         except Exception:  # noqa: BLE001
             pass
-        if qty > 0:
-            _real_close(pos, qty, api_mode)
+    else:
+        qty = round(qty, 8)
     if qty > 0:
         _record_close(pos, qty, exit_price, reason, notifier)
     db.update_position(pos["id"], {"status": "closed"})

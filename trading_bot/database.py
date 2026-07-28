@@ -408,15 +408,20 @@ def get_trades(limit=None, paper_mode=None):
     return [dict(r) for r in conn.execute(q, args).fetchall()]
 
 
-def get_today_trades():
-    """All trades whose exit happened today (UTC)."""
+def get_today_trades(paper_mode=None):
+    """Trades whose exit happened today (UTC). paper_mode keeps the paper and
+    real ledgers separate so the daily-loss guard never mixes simulated PnL into
+    a real account's circuit breaker (or vice versa)."""
     conn = get_conn()
     today = today_utc_str()
-    rows = conn.execute(
-        "SELECT * FROM trades WHERE substr(COALESCE(exit_timestamp, timestamp),1,10)=? "
-        "ORDER BY id DESC",
-        (today,),
-    ).fetchall()
+    q = ("SELECT * FROM trades "
+         "WHERE substr(COALESCE(exit_timestamp, timestamp),1,10)=?")
+    args = [today]
+    if paper_mode is not None:
+        q += " AND paper_mode=?"
+        args.append(paper_mode)
+    q += " ORDER BY id DESC"
+    rows = conn.execute(q, tuple(args)).fetchall()
     return [dict(r) for r in rows]
 
 
