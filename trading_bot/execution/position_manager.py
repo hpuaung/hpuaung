@@ -162,11 +162,18 @@ def _record_close(pos, qty, exit_price, reason, notifier=None):
 
 
 def _real_close(pos, qty, api_mode):
-    """Market-close `qty` (real mode). Returns True on success, False on failure."""
+    """Market-close `qty` (real). Returns True on success OR when the position is
+    already flat on the exchange (its resting SL/TP filled first — reconcile, do
+    NOT retry forever); False only on a genuinely transient error."""
     try:
         orders.market_close(pos["symbol"], pos["side"], qty, api_mode)
         return True
     except Exception as e:  # noqa: BLE001
+        msg = str(e).lower()
+        if any(k in msg for k in ("-2022", "reduceonly", "-4046", "-2011",
+                                  "no position", "position side")):
+            db.log_event("CLOSE_RECONCILE", f"{pos['symbol']} already flat: {e}")
+            return True
         db.log_event("CLOSE_ERROR", f"{pos['symbol']}: {e}")
         return False
 
@@ -201,11 +208,32 @@ def _close_full(pos, exit_price, reason, api_mode, notifier=None):
 
 
 def _close_partial(pos, tp_level, exit_price, close_pct, api_mode, notifier=None):
-    qty = round(float(pos["entry_qty"]) * (close_pct / 100.0), 8)
+    qty = float(pos["entry_qty"]) * (close_pct / 100.0)
+    if not pos.get("paper_mode"):
+        try:
+            qty = bc.truncate_qty(qty, bc.get_filters(pos["symbol"], api_mode)["stepSize"])
+        except Exception:  # noqa: BLE001
+            qty = round(qty, 8)
+    else:
+        qty = round(qty, 8)
     if qty <= 0:
         return
     if not pos.get("paper_mode"):
-        _real_close(pos, qty, api_mode)
+        # Cancel resting orders first so the exchange TP for this level cannot ALSO
+        # fill (double close); close the fraction; then re-arm the SL for the
+        # remainder (cancel_all removed it) so it is never left unprotected.
+        try:
+            orders.cancel_all_orders(pos["symbol"], api_mode)
+        except Exception:  # noqa: BLE001
+            pass
+        if not _real_close(pos, qty, api_mode):
+            db.log_event("PARTIAL_CLOSE_FAILED", f"{pos['symbol']} TP{tp_level} — retry next scan")
+            return
+        try:
+            close_side = "SELL" if pos["side"] == "BUY" else "BUY"
+            orders._stop_market(bc.get_client(api_mode), pos["symbol"], close_side, pos["sl_price"])
+        except Exception:  # noqa: BLE001
+            pass
     _record_close(pos, qty, exit_price, f"TP{tp_level}", notifier)
 
 

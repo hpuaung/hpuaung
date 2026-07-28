@@ -37,6 +37,15 @@ def _sizing(symbol, strategy, signal, equity, multiplier, api_mode):
     # Win/loss streak adjustment (added to the risk %).
     eff_risk = max(0.1, eff_risk + risk_guard.streak_risk_adjustment())
 
+    # Auto mode self-scales risk DOWN to stay within the mandatory Lev x Risk cap,
+    # instead of letting apply_hard_cap_guard block every entry once a winning
+    # account's recommended risk pushes the product over the cap. Manual mode
+    # still hits the guard so the user is told to lower their own inputs.
+    if auto_risk:
+        _cap = db.get_float("lev_risk_hard_cap_pct", 10.0)
+        if eff_lev > 0 and eff_lev * eff_risk > _cap:
+            eff_risk = max(0.1, _cap / eff_lev)
+
     # Hard cap guard (always active).
     ok, reason = risk_guard.apply_hard_cap_guard(eff_lev, eff_risk)
     if not ok:
@@ -93,6 +102,11 @@ def _sizing(symbol, strategy, signal, equity, multiplier, api_mode):
         return {"blocked": f"qty {qty} < minQty {filters['minQty']}"}
     if qty > filters["maxQty"]:
         qty = filters["maxQty"]
+    # Binance rejects sub-minNotional orders (qty*price below ~$5). Block here so
+    # a real entry never silently fails (and a paper entry never simulates a fill
+    # a real account could not actually place).
+    if entry * qty < filters.get("minNotional", 5.0):
+        return {"blocked": f"notional {entry*qty:.2f} < min {filters.get('minNotional', 5.0)}"}
 
     return {
         "eff_lev": eff_lev,
@@ -230,7 +244,17 @@ def execute_order(symbol, strategy, signal, *, equity, multiplier, api_mode,
 
     try:
         entry_order = _market_entry(client, symbol, side, qty)
-        db.update_position(pos_id, {"order_id": str(entry_order.get("orderId", ""))})
+        # Record the ACTUAL average fill price (and recomputed fees), not the
+        # planned entry — otherwise real net_pnl is systematically overstated.
+        try:
+            _fill = float(entry_order.get("avgPrice") or 0.0)
+        except (TypeError, ValueError):
+            _fill = 0.0
+        _upd = {"order_id": str(entry_order.get("orderId", ""))}
+        if _fill > 0:
+            _upd["entry_price"] = _fill
+            _upd["fees_estimated"] = _fill * qty * TAKER_FEE * 2
+        db.update_position(pos_id, _upd)
 
         _stop_market(client, symbol, close_side, sized["sl"])
 

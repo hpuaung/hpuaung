@@ -278,7 +278,8 @@ def get_filters(symbol, api_mode="test"):
         return _exchange_filters[symbol]
     client = get_client(api_mode)
     s = _fetch_symbol_info(client, symbol)
-    result = {"tickSize": 0.01, "stepSize": 0.001, "minQty": 0.001, "maxQty": 1e9}
+    result = {"tickSize": 0.01, "stepSize": 0.001, "minQty": 0.001, "maxQty": 1e9,
+              "minNotional": 5.0}
     if s:
         for f in s["filters"]:
             if f["filterType"] == "PRICE_FILTER":
@@ -287,6 +288,9 @@ def get_filters(symbol, api_mode="test"):
                 result["stepSize"] = float(f["stepSize"])
                 result["minQty"] = float(f["minQty"])
                 result["maxQty"] = float(f["maxQty"])
+            elif f["filterType"] in ("MIN_NOTIONAL", "NOTIONAL"):
+                # Binance rejects orders whose qty*price is below this (~$5).
+                result["minNotional"] = float(f.get("notional") or f.get("minNotional") or 5.0)
     _exchange_filters[symbol] = result
     return result
 
