@@ -71,6 +71,16 @@ def _sizing(symbol, strategy, signal, equity, multiplier, api_mode):
     entry = live
     sl += off; tp1 += off; tp2 += off; tp3 += off
 
+    # Reject signals whose SL/TP1 landed on the WRONG side of entry — e.g. trend's
+    # ema50 SL when price is on the far side of ema50, or a breakout TP1 that sits
+    # below entry on a large break. The backtest's _valid() skips these; live must
+    # too, or they instant-close/-stop the moment they open.
+    _side = signal["signal"]
+    if _side == "BUY" and not (sl < entry < tp1):
+        return {"blocked": f"BUY sl/tp1 wrong side (sl={sl:.6g} e={entry:.6g} tp={tp1:.6g})"}
+    if _side == "SELL" and not (tp1 < entry < sl):
+        return {"blocked": f"SELL sl/tp1 wrong side (tp={tp1:.6g} e={entry:.6g} sl={sl:.6g})"}
+
     sl_distance = abs(entry - sl)
     if sl_distance <= 0:
         return {"blocked": "SL distance is zero"}
