@@ -53,16 +53,23 @@ def _sizing(symbol, strategy, signal, equity, multiplier, api_mode):
     sig_entry = float(signal["entry"])
     sl = float(signal["sl"])
     tp1 = float(signal["tp1"]); tp2 = float(signal["tp2"]); tp3 = float(signal["tp3"])
+    sig_sl_dist = abs(sig_entry - sl)
     try:
         live = bc.get_price(symbol, api_mode)
     except Exception:  # noqa: BLE001
         live = 0.0
-    if live and live > 0:
-        off = live - sig_entry
-        entry = live
-        sl += off; tp1 += off; tp2 += off; tp3 += off
-    else:
-        entry = sig_entry
+    # No live price -> do NOT fall back to the stale candle close: that recreates
+    # the instant-close phantom the live-shift was written to kill. Skip instead.
+    if not live or live <= 0:
+        return {"blocked": "no live price for entry"}
+    # If the market has already moved more than one SL-distance away from the
+    # signal's candle close, the move happened without us — chasing a dead thesis.
+    # Skip rather than enter at an arbitrary shifted price.
+    if sig_sl_dist > 0 and abs(live - sig_entry) > sig_sl_dist:
+        return {"blocked": f"live moved >1R from signal ({sig_entry}->{live}), stale skip"}
+    off = live - sig_entry
+    entry = live
+    sl += off; tp1 += off; tp2 += off; tp3 += off
 
     sl_distance = abs(entry - sl)
     if sl_distance <= 0:
