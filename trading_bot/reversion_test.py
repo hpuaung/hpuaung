@@ -18,6 +18,23 @@ from utils import indicators as ind
 from strategies import reversion
 
 db.init_db()
+
+# --- CRITICAL: neutralise the LIVE reversion tuning in-process (no DB write) so
+#     each CONFIG's label is honest. reversion.run() reads reversion_rsi_extreme
+#     straight from the DB (line ~33/54); the live scalping slot has it set to 20,
+#     which would secretly gate EVERY config here to rsi<=20 — making "baseline"
+#     already rsi<20 and the comparison meaningless. Forcing it to 0 lets the
+#     external passes() filter be the ONLY gate, so:
+#        baseline = true ungated base reversion
+#        rsi<20   = base + rsi<=20  ==  EXACTLY the live scalping strategy
+#     reversion_fixed_rr is also zeroed because this test sets its own R:R (RR). ---
+_orig_get_float = db.get_float
+def _patched_get_float(key, default=0.0):
+    if key in ("reversion_rsi_extreme", "reversion_fixed_rr"):
+        return 0.0
+    return _orig_get_float(key, default)
+db.get_float = _patched_get_float
+
 _a = sys.argv[1:]
 pairs_arg = _a[0] if len(_a) > 0 else "all"
 INTERVALS = [x.strip() for x in (_a[1] if len(_a) > 1 else "15m,30m").split(",") if x.strip()]
