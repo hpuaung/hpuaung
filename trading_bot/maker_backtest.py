@@ -200,11 +200,32 @@ def sim_maker_real(signals, rr, W, hi, lo, c, n):
             continue
         filled += 1
         tp = e + d * rr * risk if rr is not None else sg.get("tp", e + d * 2 * risk)
-        res = _simulate_exit(fill_candle, d, e, tp, sl, hi, lo, c, n)
-        if res is None:
-            free_from = n
-            break
-        ex, etype, jx = res
+        # The limit fills INTRABAR on fill_candle. The REMAINDER of that same
+        # candle can still hit SL or TP — a limit that fills on a down-probe is
+        # frequently stopped on the very same candle. We must check the fill
+        # candle itself (SL before TP, the conservative convention), otherwise
+        # filled-then-stopped is impossible by construction and maker-real looks
+        # unrealistically good — the exact adverse-selection cost we're measuring.
+        j = fill_candle
+        ex = etype = None
+        if d > 0:
+            if lo[j] <= sl:
+                ex, etype = sl * (1 - SLIP), "sl"
+            elif hi[j] >= tp:
+                ex, etype = tp, "tp"
+        else:
+            if hi[j] >= sl:
+                ex, etype = sl * (1 + SLIP), "sl"
+            elif lo[j] <= tp:
+                ex, etype = tp, "tp"
+        if ex is not None:
+            jx = j                                  # closed on the fill candle
+        else:
+            res = _simulate_exit(j, d, e, tp, sl, hi, lo, c, n)
+            if res is None:
+                free_from = n
+                break
+            ex, etype, jx = res
         gross = (ex - e) * d / risk
         out.append(gross - _fee_R(e, ex, etype, "maker", risk))
         free_from = jx
@@ -236,9 +257,7 @@ print("=" * 92)
 verdicts = []   # (tf, strat, rr, taker_pf, best_maker_pf, best_fill, best_per30)
 
 for tf in TIMEFRAMES:
-    sig_all = {s: [] for s in STRATS}   # signals aggregated across pairs, offset per pair
-    bars = {s: {} for s in STRATS}      # not used; kept per-pair below
-    per_pair = []                       # (signals dict, hi, lo, c, n)
+    per_pair = []                       # (signals dict, hi, lo, c, n) per pair
     max_candles = 0
     print(f"\n[progress] {tf}: scanning {len(PAIRS)} pairs ...", flush=True)
     for pi, sym in enumerate(PAIRS, 1):
@@ -329,3 +348,9 @@ print("\nHow to read: pick a row where maker PF clearly beats taker PF AND fill%
 print("high enough that /30d stays usable. That combo is where building maker/limit")
 print("entries is worth the code. If the table is empty, don't build it — the fee was")
 print("never the real problem.")
+print("\nHonest caveats (this is still OPTIMISTIC for maker, so treat a weak result as")
+print("conclusive and a strong result as 'promising, then paper-test'):")
+print("  * touch=fill: a limit is assumed filled the instant price touches it. Real")
+print("    fills also need queue priority, so live fill% will be <= these numbers.")
+print("  * the VERDICT row shows the BEST of W1/W2/W3 — always read the per-strategy")
+print("    block above it to see how fast fill% decays as the window shrinks.")
