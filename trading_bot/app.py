@@ -1157,6 +1157,19 @@ def tab_settings():
                        db.get_int("max_concurrent_trades", 5), is_int=True)
             slider("Lev×Risk Hard Cap %", "lev_risk_hard_cap_pct", 5.0, 20.0, 0.5,
                    db.get_float("lev_risk_hard_cap_pct", 10.0))
+            # Correlation caps — limit same-direction trades PER engine so one
+            # market move can't hit a pile of positions at once (e.g. a market-wide
+            # downtrend firing 6 swing SELLs together). Applies in Auto + Manual.
+            st.markdown("**🔗 Correlation caps** — max same-direction trades per engine")
+            bool_toggle("Swing: limit correlated trades", "swing_corr_filter", False)
+            slider("Swing max same-direction trades", "swing_max_corr_trades", 1, 10, 1,
+                   db.get_int("swing_max_corr_trades", 3), is_int=True)
+            bool_toggle("Scalping: limit correlated trades", "scalping_corr_filter", False)
+            slider("Scalping max same-direction trades", "scalping_max_corr_trades", 1, 10, 1,
+                   db.get_int("scalping_max_corr_trades", 2), is_int=True)
+            st.caption("When ON, the engine blocks a new BUY/SELL once it already "
+                       "holds this many open trades on the SAME side — caps the "
+                       "'whole market moved and every position went the same way' risk.")
             if not g_auto:
                 # min 0.2 so the breakout-1d config (tight SL, R:R sometimes < 1)
                 # is representable — a 1.0 floor here silently blocks breakout entries.
