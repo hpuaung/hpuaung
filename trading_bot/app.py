@@ -441,6 +441,25 @@ def tab_dashboard():
     sc[1].write(f"🤖 LightGBM: {'🟢 Active' if model else ('🔴 Not Trained' if ai_on else '⚪ Off')}")
     sc[1].write(f"📰 Sentiment: {'🟢 Connected' if db.get_setting('hf_token') else '🔴 Error'}")
 
+    # Section 4b — Quick Controls (engine restart + emergency close, right here on
+    # the Dashboard so they're one tap away, not buried in Settings).
+    st.subheader("🛑 Quick Controls")
+    qc = st.columns(2)
+    if qc[0].button("🔄 Restart Engine", key="dash_restart", use_container_width=True,
+                    help="Restart the trading engine so pulled code / new settings take effect."):
+        ok, msg = _restart_engine()
+        (st.success if ok else st.error)(msg)
+    if qc[1].button("🚨 EMERGENCY CLOSE ALL", key="dash_emerg", type="primary",
+                    use_container_width=True,
+                    help="Stop BOTH engines and market-close EVERY open position now."):
+        n = _emergency_close_all()
+        st.warning(f"🚨 Emergency: both engines stopped, {n} position(s) closed, orders cancelled. "
+                   "Use '🔄 Restart All Engines' (Settings) to resume trading.")
+        st.rerun()
+    st.caption("**Restart Engine** = load new code/config after an update (dashboard stays up). "
+               "**Emergency Close All** = halt both engines and close every open position at "
+               "market immediately — the bail-out button.")
+
     # Section 5 — Live Positions
     st.subheader("📍 Live Positions")
     positions = db.get_open_positions()
@@ -924,6 +943,50 @@ def _close_all_for(strategy):
         _close_one(p)
 
 
+def _restart_engine():
+    """Restart the trading engine systemd service so freshly pulled code / new
+    settings take effect. Targets futures-engine ONLY — restarting futures-bot
+    would kill this dashboard. Returns (ok, message)."""
+    import subprocess
+    try:
+        r = subprocess.run(["systemctl", "restart", "futures-engine"],
+                           capture_output=True, text=True, timeout=30)
+        if r.returncode == 0:
+            return True, "✅ Engine restarted — new code / config is now live."
+        err = (r.stderr or r.stdout or "").strip()
+        return False, f"Restart failed ({err or 'permission?'}). Run from terminal: systemctl restart futures-engine"
+    except Exception as e:  # noqa: BLE001
+        return False, f"Restart error: {e}. Run from terminal: systemctl restart futures-engine"
+
+
+def _emergency_close_all():
+    """Panic button: stop BOTH engines, market-CLOSE every open position (paper +
+    real, both engines), then cancel any resting orders. Returns how many
+    positions were closed. Unlike the old 'stop', this actually CLOSES positions
+    so nothing is left naked."""
+    db.save_setting("emergency_stop", "1")
+    db.save_setting("scalping_bot_on", "0")
+    db.save_setting("swing_bot_on", "0")
+    closed = 0
+    for p in db.get_open_positions():
+        try:
+            _close_one(p)
+            closed += 1
+        except Exception:  # noqa: BLE001
+            pass
+    for sym in [s.strip() for s in db.get_setting("selected_pairs", "").split(",") if s.strip()]:
+        for mode in ("test", "real"):
+            try:
+                orders.cancel_all_orders(sym, mode)
+            except Exception:  # noqa: BLE001
+                pass
+    try:
+        tg.notify_engine_stop("Emergency CLOSE ALL from dashboard")
+    except Exception:  # noqa: BLE001
+        pass
+    return closed
+
+
 def _place_test_trade(strategy):
     """Open one small PAPER BUY position on the first selected pair (for testing
     the execution + monitoring pipeline, independent of signal generation)."""
@@ -971,16 +1034,17 @@ def tab_settings():
                    "Pick one below to snap to a validated swing config.")
     _plan_labels = {n: f"Plan {n} — {swing_plans.PLAN_NAMES[n]}: {swing_plans.PLAN_DESC[n]}"
                     for n in (1, 2, 3)}
-    # Seed the radio ONCE from the active plan, then let the user pick freely.
-    # (Passing index= derived from `active` every render fought the user's tap and
-    # snapped it back to the running plan — you could never move off Plan 2.)
-    if "swing_plan_pick" not in st.session_state:
-        st.session_state["swing_plan_pick"] = active if active in (1, 2, 3) else 1
-    _pick = st.radio(
-        "Pick your SWING strategy (this only sets the swing engine):",
-        [1, 2, 3], format_func=lambda n: _plan_labels[n],
-        key="swing_plan_pick")
-    if st.button(f"✅ Apply Swing Plan {_pick}", type="primary", key="apply_swing_plan"):
+    # Radio + Apply live inside a st.form so picking a plan does NOT trigger a
+    # mid-pick rerun that snaps the choice back to the running plan (the old bug:
+    # you could never move off Plan 2). The form holds your selection until you
+    # press Apply; index just sets the default to whatever is currently active.
+    _default_idx = (active - 1) if active in (1, 2, 3) else 0
+    with st.form("swing_plan_form"):
+        _pick = st.radio(
+            "Pick your SWING strategy (this only sets the swing engine):",
+            [1, 2, 3], index=_default_idx, format_func=lambda n: _plan_labels[n])
+        _apply = st.form_submit_button("✅ Apply Swing Plan", type="primary")
+    if _apply:
         swing_plans.apply_swing_plan(_pick)
         st.success(f"✅ Swing set to Plan {_pick} ({swing_plans.PLAN_NAMES[_pick]}). "
                    "Takes effect on the next engine scan — no restart needed.")
