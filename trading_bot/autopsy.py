@@ -96,6 +96,7 @@ overall(T, "OVERALL (paper)")
 block(T, "close reason (R:R KILLER lives here)", lambda t: t.get("close_reason") or "?")
 block(T, "strategy (swing vs scalping)", lambda t: t.get("strategy") or "?")
 block(T, "side", lambda t: t.get("side") or "?")
+block(T, "session (time-of-day edge)", lambda t: t.get("session") or "?")
 
 # config-era check
 print("\n--- by ENTRY DATE (config-era contamination check) ---")
@@ -118,6 +119,30 @@ for t in T:
 for (st, cr), v in sorted(cross.items(), key=lambda kv: sum(kv[1])):
     w = len([x for x in v if x > 0])
     print(f"  {st:9} {cr:10} n={len(v):<3} net={sum(v):+7.2f} win%={100*w//len(v):>3}")
+
+# ---- per-trade stories: SEE why each single trade won or lost ----
+def listing(rows, title, want_win, limit=50):
+    sel = [t for t in rows if (num(t.get("net_pnl")) > 0) == want_win]
+    sel.sort(key=lambda t: num(t.get("net_pnl")), reverse=want_win)
+    print(f"\n--- {title} ({len(sel)}) ---")
+    if not sel:
+        print("  none")
+        return
+    print(f"  {'when':12}{'pair':10}{'engine':9}{'side':5}{'reason':11}"
+          f"{'entry':>10}{'exit':>10}{'pnl%':>7}{'net$':>8}  {'hold':<9}session")
+    for t in sel[:limit]:
+        when = str(t.get('entry_timestamp') or t.get('timestamp') or '')[5:16]
+        print(f"  {when:12}{str(t.get('pair') or '?'):10}{str(t.get('strategy') or '?'):9}"
+              f"{str(t.get('side') or '?'):5}{str(t.get('close_reason') or '?'):11}"
+              f"{num(t.get('entry_price')):>10.5g}{num(t.get('exit_price')):>10.5g}"
+              f"{num(t.get('pnl_percent')):>+7.2f}{num(t.get('net_pnl')):>+8.2f}  "
+              f"{str(t.get('hold_duration') or '?'):<9}{str(t.get('session') or '?')}")
+
+# reason=TP1/TP2/TP3 -> target hit (edge worked). reason=SL/STOP -> stop hit
+# (thesis wrong / market reversed). reason=TIME/manual -> exited without
+# resolving -> the setup fizzled, neither target nor stop.
+listing(T, "WINNERS — reason shows WHY it won (TP=target reached)", True)
+listing(T, "LOSERS  — reason shows WHY it lost (SL=stopped out, TIME=fizzled)", False)
 
 print("\n" + "=" * 66)
 print("READ THIS:")
