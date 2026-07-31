@@ -1413,9 +1413,11 @@ def main():
     with t1:
         tab_dashboard()
     with t2:
+        # Higher TFs (4h/6h/12h) included so the slot can run the robust trend /
+        # breakout edges (best on 6h), not just fast reversion scalps.
         engine_tab("scalping", "⚡ Scalping Engine",
-                   ["1m", "3m", "5m", "15m", "30m", "1h"], ["5m", "15m", "30m", "1h"],
-                   ["15m", "1h", "4h"])
+                   ["5m", "15m", "30m", "1h", "4h", "6h", "12h"], ["15m", "1h", "4h"],
+                   ["1h", "4h", "1d"])
     with t3:
         engine_tab("swing", "📈 Swing Engine",
                    ["1h", "4h", "1d"], ["4h", "1d"], ["1d", "3d", "1w"], swing=True)
