@@ -749,18 +749,51 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
 
         st.divider()
         st.subheader("🧩 Strategy")
-        rev_on = bool_toggle("🔄 Mean Reversion", "scalping_reversion_on", True)
-        if rev_on:
-            st.markdown("**🔄 Reversion tuning** (backtest: RSI<20 + R:R 1:3 = best)")
+        # Manual strategy picker for the scalping slot — pick ONE, applied on the
+        # next scan. Inside a form so the choice can't be snapped back by a rerun.
+        # Trend / Breakout are the walk-forward-robust edges (best on 6h); Reversion
+        # is the RSI<20 scalper (decays across eras — paper-watch only).
+        _opts = ["Trend", "Breakout", "Reversion"]
+        _cur = ("Trend" if db.get_bool(f"{strategy}_trend_on")
+                else "Breakout" if db.get_bool(f"{strategy}_breakout_on")
+                else "Reversion" if db.get_bool(f"{strategy}_reversion_on") else "Trend")
+        with st.form(f"{strategy}_strategy_form"):
+            _pick = st.radio("Scalping engine strategy (pick one)", _opts,
+                             index=_opts.index(_cur) if _cur in _opts else 0)
+            _frr = st.slider("R:R (TP = R × SL) — 3 = validated 1:3", 0.0, 4.0,
+                             value=float(db.get_float(f"{strategy}_fixed_rr", 0.0)
+                                         or db.get_float("reversion_fixed_rr", 3.0) or 3.0),
+                             step=0.5)
+            _applied = st.form_submit_button("✅ Apply Scalping Strategy", type="primary")
+        if _applied:
+            db.save_setting(f"{strategy}_trend_on", "1" if _pick == "Trend" else "0")
+            db.save_setting(f"{strategy}_breakout_on", "1" if _pick == "Breakout" else "0")
+            db.save_setting(f"{strategy}_reversion_on", "1" if _pick == "Reversion" else "0")
+            db.save_setting(f"{strategy}_hybrid_on", "0")
+            # R:R routing: reversion sets its own TP via reversion_fixed_rr, so
+            # scalping_fixed_rr must be 0 then (avoids double-override); trend/
+            # breakout use the engine's {strategy}_fixed_rr override instead.
+            if _pick == "Reversion":
+                db.save_setting("reversion_fixed_rr", str(_frr))
+                db.save_setting(f"{strategy}_fixed_rr", "0")
+            else:
+                db.save_setting(f"{strategy}_fixed_rr", str(_frr))
+                db.save_setting("reversion_fixed_rr", "0")
+            st.success(f"✅ Scalping → {_pick} · R:R 1:{_frr:g}. Live on the next scan "
+                       "(set the Timeframe above — e.g. 6h for the robust trend edge).")
+            st.rerun()
+        st.caption(f"Now running: **{_cur}** on **{db.get_setting(f'{strategy}_timeframe','?')}**. "
+                   "Trend/Breakout = robust edges (use 6h). Reversion = RSI<20 scalper "
+                   "(decays — watch on paper).")
+        # Reversion-only tuning, shown when Reversion is the active pick.
+        if db.get_bool(f"{strategy}_reversion_on"):
+            st.markdown("**🔄 Reversion tuning** (backtest: RSI<20 = best, but era-decays)")
             ext = slider("RSI extreme gate — 0 = off · lower = stricter/fewer/better",
                          "reversion_rsi_extreme", 0, 40, 1,
                          db.get_int("reversion_rsi_extreme", 0), is_int=True)
             if ext > 0:
                 st.caption(f"🎯 Only fires when RSI ≤ {ext} (buy) / ≥ {100-ext} (sell). "
                            f"20 = edge (PF~1.3, fewer) · 25 = more trades (PF~1.1) · 0 = all.")
-            slider("Reversion R:R (TP = R × SL) — 0 = native TP",
-                   "reversion_fixed_rr", 0.0, 4.0, 0.5,
-                   db.get_float("reversion_fixed_rr", 0.0))
     # Section 5 — Risk Management
     st.divider()
     st.subheader("🛡️ Risk Management")
