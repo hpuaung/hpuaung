@@ -254,6 +254,24 @@ def process_position(pos, notifier=None):
         db.log_event("PRICE_ERROR", f"{pos['symbol']}: {e}")
         return
 
+    # REAL positions carry a resting exchange SL (dead-man's switch) that can fill
+    # between scans. Reconcile against the actual exchange position FIRST: if the
+    # exchange is already flat, that stop filled — book the close at the SL (best
+    # estimate) instead of leaving a ghost the monitor keeps managing or later
+    # booking a fabricated software win. Paper positions have no exchange side.
+    if not pos.get("paper_mode"):
+        try:
+            amt = bc.get_position_amt(pos["symbol"], api_mode)
+        except Exception:  # noqa: BLE001
+            amt = None
+        if amt is not None and abs(amt) < float(pos["entry_qty"] or 0.0) * 0.01:
+            qty_left = float(pos["entry_qty"]) * _remaining_fraction(pos)
+            if qty_left > 0:
+                _record_close(pos, qty_left, float(pos["sl_price"]), "Reconciled-SL", notifier)
+            db.update_position(pos["id"], {"status": "closed"})
+            db.delete_position(pos["id"])
+            return
+
     entry = float(pos["entry_price"])
     partial = db.get_bool(f"{strat}_partial_tp", True)
     auto_be = db.auto_flag(f"{strat}_auto_be", True)

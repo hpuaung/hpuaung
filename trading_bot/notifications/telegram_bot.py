@@ -32,9 +32,21 @@ def send_message(text, chat_id=None):
             json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
             timeout=10,
         )
-        return resp.status_code == 200
+        if resp.status_code != 200:
+            # Surface Telegram's REAL reason instead of failing silently. Most
+            # often: the user has not opened the bot and pressed Start (a bot
+            # cannot initiate a chat -> "Forbidden: bot can't initiate..."), or the
+            # Chat ID is wrong ("chat not found"), or the token is revoked
+            # ("Unauthorized"). Store it so the dashboard can show the reason.
+            _msg = f"{resp.status_code}: {resp.text[:300]}"
+            db.log_event("TELEGRAM_ERROR", _msg)
+            db.save_setting("telegram_last_error", _msg)
+            return False
+        db.save_setting("telegram_last_error", "")   # clear on success
+        return True
     except Exception as e:  # noqa: BLE001
         db.log_event("TELEGRAM_ERROR", str(e))
+        db.save_setting("telegram_last_error", str(e))
         return False
 
 

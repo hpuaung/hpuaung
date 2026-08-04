@@ -115,6 +115,18 @@ def get_available_balance(api_mode="test"):
     return float(acct.get("availableBalance", 0.0))
 
 
+@with_retry(max_retries=2, base_delay=1)
+@rate_limited(weight=5)
+def get_position_amt(symbol, api_mode="test"):
+    """Signed position size held on the exchange for `symbol` (0 = flat). Used to
+    reconcile the DB against reality when a resting stop fills between scans."""
+    client = get_client(api_mode)
+    info = client.futures_position_information(symbol=symbol)
+    if info:
+        return float(info[0].get("positionAmt", 0.0) or 0.0)
+    return 0.0
+
+
 # ---------------------------------------------------------------------------
 # OHLCV
 # ---------------------------------------------------------------------------

@@ -1291,15 +1291,25 @@ def tab_settings():
     with st.expander("📱 6. Telegram", expanded=False):
         text("Bot Token", "telegram_token", password=True, show_saved=True)
         text("Chat ID", "telegram_chat_id", password=True, show_saved=True)
-        if st.button("💾 Save Telegram Keys"):
+        st.caption("⚠️ First open your bot in Telegram and tap **Start** — a bot "
+                   "cannot message you until you do. Chat ID = YOUR numeric id "
+                   "(get it from @userinfobot), not the bot's name.")
+        if st.button("💾 Save & Test Telegram"):
             # Force-persist from the widgets — on mobile the per-field on_change
             # can miss the last keystrokes, which is why the keys seemed to "revert".
             for _k in ("telegram_token", "telegram_chat_id"):
                 _v = st.session_state.get(f"w_{_k}")
                 if _v:  # never wipe a saved key with a blank box
                     db.save_setting(_k, _v)
-            st.success("✅ Telegram keys saved (persist across restarts).")
-            st.rerun()
+            # Test immediately and show the REAL reason if it fails, so the user
+            # isn't left guessing (the #1 cause is not having pressed Start).
+            if tg.test_telegram():
+                st.success("✅ Saved and a test message was delivered to your chat.")
+            else:
+                _err = db.get_setting("telegram_last_error", "") or "unknown — see Events log"
+                st.error(f"Saved, but the test did NOT deliver → {_err}\n\n"
+                         "Fix: (1) open the bot in Telegram and tap Start, "
+                         "(2) Chat ID must be your numeric id, (3) token not revoked.")
         # Notification toggles batched — flip several, then one Apply (no rerun
         # per toggle). Token/Chat + their Save button stay live above.
         with settings_form("tg_notify", "💾 Apply Notification Settings"):

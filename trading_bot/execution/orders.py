@@ -157,6 +157,20 @@ def _take_profit(client, symbol, close_side, stop_price, qty=None, close_all=Fal
     return client.futures_create_order(**params)
 
 
+def _num(x):
+    try:
+        return float(x or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+@with_retry(max_retries=2, base_delay=1)
+@rate_limited(weight=1)
+def _get_order(client, symbol, order_id):
+    """Read back a placed order to get its real fill (avgPrice / executedQty)."""
+    return client.futures_get_order(symbol=symbol, orderId=order_id)
+
+
 def execute_order(symbol, strategy, signal, *, equity, multiplier, api_mode,
                   paper_mode, funding_rate=0.0, open_interest=0.0, session="",
                   lgbm_score=0.0, news_score=0.0, health=100.0, entry_features=None):
@@ -244,34 +258,53 @@ def execute_order(symbol, strategy, signal, *, equity, multiplier, api_mode,
 
     try:
         entry_order = _market_entry(client, symbol, side, qty)
-        # Record the ACTUAL average fill price (and recomputed fees), not the
-        # planned entry — otherwise real net_pnl is systematically overstated.
-        try:
-            _fill = float(entry_order.get("avgPrice") or 0.0)
-        except (TypeError, ValueError):
-            _fill = 0.0
+        # Read the ACTUAL fill. A create-order ack can come back before the fill
+        # is reflected, so re-read the order once if avgPrice isn't populated, and
+        # size the SL off what ACTUALLY filled (executedQty), not the request.
+        _fill = _num(entry_order.get("avgPrice"))
+        _filled_qty = _num(entry_order.get("executedQty"))
+        if _fill <= 0 and entry_order.get("orderId"):
+            try:
+                _chk = _get_order(client, symbol, entry_order["orderId"])
+                _fill = _num(_chk.get("avgPrice")) or _fill
+                _filled_qty = _num(_chk.get("executedQty")) or _filled_qty
+            except Exception:  # noqa: BLE001
+                pass
+        if _filled_qty > 0:
+            qty = _filled_qty                       # authoritative filled size
         _upd = {"order_id": str(entry_order.get("orderId", ""))}
         if _fill > 0:
             _upd["entry_price"] = _fill
-            _upd["fees_estimated"] = _fill * qty * TAKER_FEE * 2
+        if qty > 0:
+            _upd["entry_qty"] = qty
+            _upd["fees_estimated"] = (_fill or entry) * qty * TAKER_FEE * 2
         db.update_position(pos_id, _upd)
 
-        _stop_market(client, symbol, close_side, sized["sl"])
+        # SL is MANDATORY. A filled entry with no resting stop is unbounded risk
+        # if the process dies before the software monitor can act. If the stop
+        # cannot be placed even after retries, FLATTEN the entry immediately
+        # instead of returning a naked position.
+        try:
+            _stop_market(client, symbol, close_side, sized["sl"])
+        except Exception as _sl_err:  # noqa: BLE001
+            db.log_event("SL_FAILED_FLATTEN",
+                         f"{symbol} {strategy}: stop placement failed ({_sl_err}) — flattening entry")
+            try:
+                market_close(symbol, side, qty, api_mode)
+            except Exception as _fe:  # noqa: BLE001
+                db.log_event("FLATTEN_FAILED",
+                             f"{symbol} {strategy}: could NOT flatten after SL failure ({_fe}) "
+                             "— NAKED POSITION, manual action needed on Binance")
+            db.update_position(pos_id, {"status": "closed"})
+            db.delete_position(pos_id)
+            return None
 
-        if partial_tp:
-            c1 = db.get_float(f"{strategy}_tp1_close_pct", 50) / 100.0
-            c2 = db.get_float(f"{strategy}_tp2_close_pct", 30) / 100.0
-            q1 = bc.truncate_qty(qty * c1, sized["filters"]["stepSize"])
-            q2 = bc.truncate_qty(qty * c2, sized["filters"]["stepSize"])
-            if q1 >= sized["filters"]["minQty"]:
-                _take_profit(client, symbol, close_side, sized["tp1"], qty=q1)
-            if q2 >= sized["filters"]["minQty"]:
-                _take_profit(client, symbol, close_side, sized["tp2"], qty=q2)
-            # Remaining quantity closes at TP3.
-            _take_profit(client, symbol, close_side, sized["tp3"], close_all=True)
-        else:
-            _take_profit(client, symbol, close_side, sized["tp1"], close_all=True)
-
+        # TP1/2/3 + trailing are managed by the SOFTWARE monitor only — we do NOT
+        # place resting TP orders on the exchange. Otherwise the exchange and the
+        # monitor both act on the same position: an exchange TP filling between
+        # scans caused double-closes and desynced/fabricated PnL. The exchange SL
+        # above stays as a dead-man's switch; process_position reconciles if it
+        # fills between scans.
         db.log_event("REAL_OPEN", f"{symbol} {side} qty={qty} @ {entry} pos_id={pos_id}")
         return pos_id
     except Exception as e:  # noqa: BLE001
