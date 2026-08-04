@@ -240,8 +240,11 @@ def _close_partial(pos, tp_level, exit_price, close_pct, api_mode, notifier=None
 def process_position(pos, notifier=None):
     """Evaluate a single open position against the live price."""
     strat = pos["strategy"]
-    # A position keeps the data source it was opened with (paper -> testnet).
-    api_mode = "test" if pos.get("paper_mode") else "real"
+    # Monitoring price is ALWAYS mainnet (public) so paper exits track the SAME
+    # real market as paper entries. Paper positions still close in the DB only —
+    # _close_full/_close_partial gate the real order on paper_mode — so this never
+    # sends a real close for a paper position.
+    api_mode = "real"
     side = pos["side"]
     d = _dir(side)
 

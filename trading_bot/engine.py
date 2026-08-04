@@ -573,9 +573,14 @@ def _run_cycle():
         for strategy in ("scalping", "swing"):
             if not db.get_bool(f"{strategy}_bot_on", False):
                 continue
-            # Per-engine mode: paper -> testnet data + simulated; real -> live.
             paper_mode = _engine_mode(strategy) == "paper"
-            api_mode = "test" if paper_mode else "real"
+            # Market DATA is ALWAYS mainnet — klines/price/funding are PUBLIC (no
+            # key needed), so paper analyses the REAL market and matches the
+            # backtests (testnet candles diverge from mainnet and miss many pairs).
+            # paper_mode ALONE gates real-vs-simulated ORDERS (orders.execute_order
+            # branches on paper_mode, not api_mode), so this never places a real
+            # trade in paper mode.
+            api_mode = "real"
             eng_equity = paper_eq if paper_mode else real_equity
             for symbol in pairs:
                 try:
@@ -619,7 +624,7 @@ def _update_snapshot(equity, equity_mode, pairs):
         prices = {}
         for s in syms:
             try:
-                prices[s] = bc.get_price(s, equity_mode)
+                prices[s] = bc.get_price(s, "real")   # public mainnet price
             except Exception:  # noqa: BLE001
                 pass
         db.save_setting("live_prices", json.dumps(prices))

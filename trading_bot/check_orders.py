@@ -38,9 +38,8 @@ if ps:
           f"{'drift%':>8}{'lev':>4}  {'opened(UTC)':<19}{'mode'}")
     total_drift = 0.0
     for p in ps:
-        api = "real" if not p["paper_mode"] else "test"
         try:
-            live = bc.get_price(p["symbol"], api)
+            live = bc.get_price(p["symbol"], "real")   # mainnet public price
         except Exception:  # noqa: BLE001
             live = 0.0
         entry = float(p["entry_price"] or 0)
