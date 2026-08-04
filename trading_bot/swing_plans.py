@@ -93,10 +93,24 @@ def apply_swing_plan(n):
     return int(n)
 
 
+# The keys that DEFINE which plan is running: strategy + timeframe + R:R. Every
+# other swing_* setting (correlation/session/news filters, partial/BE/trail,
+# risk) is an independently-tunable knob that must NOT break plan identity.
+# The old all-keys match returned None the moment you enabled, say,
+# swing_corr_filter for a correlation cap — so the selector snapped back to
+# Plan 1, and re-applying a plan reset every knob (the "plan reverts / settings
+# reset" bug). Matching only the identity keys fixes that.
+_PLAN_IDENTITY_KEYS = ("swing_timeframe", "swing_trend_on", "swing_breakout_on",
+                       "swing_reversion_on", "swing_fixed_rr")
+
+
 def active_swing_plan():
-    """Swing plan the live DB currently matches (compares swing_* only), or None."""
+    """Swing plan the live DB matches on the IDENTITY keys (strategy + timeframe
+    + R:R), or None. Independently-tunable filter/risk knobs are ignored so they
+    never make a running plan look 'custom'."""
     for n in (1, 2, 3):
-        if all(str(db.get_setting(k, "")) == v for k, v in swing_plan_settings(n).items()):
+        want = swing_plan_settings(n)
+        if all(str(db.get_setting(k, "")) == str(want[k]) for k in _PLAN_IDENTITY_KEYS):
             return n
     return None
 
