@@ -113,15 +113,32 @@ def settings_form(name, label="💾 Apply changes"):
             fields, _FORM = _FORM, None
         if st.form_submit_button(label):
             for key, kind in fields:
-                v = st.session_state.get(f"w_{key}")
-                db.save_setting(key, ("1" if v else "0") if kind == "bool" else v)
+                ss = f"w_{key}"
+                new = st.session_state.get(ss)
+                # Persist ONLY fields the user actually changed since page load.
+                # Saving the whole pinned snapshot (the old behaviour) clobbered
+                # any key another writer (engine / deploy / CLI getset / a second
+                # tab) changed meanwhile, and on a fresh DB wrote the DEFAULTS back
+                # over real values — the "settings reset on revisit" bug.
+                if str(new) != str(st.session_state.get(f"orig_{ss}")):
+                    db.save_setting(key, ("1" if new else "0") if kind == "bool" else new)
+                    st.session_state[f"orig_{ss}"] = new   # new baseline
             st.success("✅ Saved")
             st.rerun()
+
+
+def _remember_orig(ss_key, value):
+    # For FORM widgets only: stash the page-load DB value so the form's Apply can
+    # tell which fields the user actually edited (dirty check) and leave the rest
+    # alone. Live widgets don't need it (they save on change).
+    if _FORM is not None:
+        st.session_state[f"orig_{ss_key}"] = value
 
 
 def _init(ss_key, value):
     if ss_key not in st.session_state:
         st.session_state[ss_key] = value
+        _remember_orig(ss_key, value)
 
 
 def _sync(ss_key, value):
@@ -131,6 +148,7 @@ def _sync(ss_key, value):
     # keep once-only init so in-progress edits survive until submit.
     if _FORM is None or ss_key not in st.session_state:
         st.session_state[ss_key] = value
+        _remember_orig(ss_key, value)
 
 
 def bool_toggle(label, key, default=False):
@@ -175,8 +193,14 @@ def text(label, key, password=False, default="", show_saved=False):
     ss = f"w_{key}"
     _init(ss, db.get_setting(key, default))
     if _FORM is None:
+        # NEVER persist a blank over a saved secret. text() holds API keys /
+        # Telegram token / chat id / admin password; on mobile, tapping a
+        # pre-filled box to retype briefly empties it, and an unguarded on_change
+        # would write "" straight over the stored key (the "Telegram keeps
+        # needing re-entry" bug). The `and` short-circuits on empty so nothing is
+        # saved — clearing a field intentionally just leaves the stored value.
         st.text_input(label, key=ss, type="password" if password else "default",
-                      on_change=lambda: db.save_setting(key, st.session_state[ss]))
+                      on_change=lambda: st.session_state[ss] and db.save_setting(key, st.session_state[ss]))
     else:
         st.text_input(label, key=ss, type="password" if password else "default")
         _reg(key, "text")
@@ -876,12 +900,15 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
                "where its OWN closed-trade history shows a poor win rate — higher "
                "quality but FEWER entries. Each needs 10+ trades in that context "
                "before it activates, so early on it changes nothing.")
-    bool_toggle("🕐 Best-hours filter — skip UTC hours that keep losing",
-                f"{strategy}_hour_filter", False)
-    bool_toggle("🌏 Session×pair filter — skip losing session+pair combos",
-                f"{strategy}_session_pair_filter", False)
-    bool_toggle("↕️ Direction filter — skip a losing BUY/SELL side on a pair",
-                f"{strategy}_dir_filter", False)
+    # Batched so toggling these doesn't rerun ("connecting") on every tap — the
+    # form name is strategy-scoped because engine_tab renders for both slots.
+    with settings_form(f"{strategy}_smart_filters", "💾 Apply Smart Filters"):
+        bool_toggle("🕐 Best-hours filter — skip UTC hours that keep losing",
+                    f"{strategy}_hour_filter", False)
+        bool_toggle("🌏 Session×pair filter — skip losing session+pair combos",
+                    f"{strategy}_session_pair_filter", False)
+        bool_toggle("↕️ Direction filter — skip a losing BUY/SELL side on a pair",
+                    f"{strategy}_dir_filter", False)
     st.caption("These answer \"which time / direction is worth trading\" from the "
                "bot's real results. ON = fewer, higher-quality entries · OFF = "
                "maximum activity (recommended until you have plenty of trades).")
@@ -896,11 +923,13 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
     st.subheader("📅 Today Stats")
     _today_stats(strategy)
 
-    # Save & notify — settings already auto-save on change; this confirms + pings Telegram.
+    # Settings save the moment you change them (or via a section's Apply button);
+    # this only pings Telegram, so label it honestly — it is NOT the save action.
     st.divider()
-    if st.button(f"💾 Save {strategy.title()} Settings", key=f"{strategy}_savenotify", type="primary"):
-        tg.send_message(f"⚙️ <b>{strategy.title()} settings saved</b>\n" + tg.build_status_text())
-        st.success("Saved ✅ (settings apply live to the running bot; Telegram notified)")
+    if st.button(f"📤 Notify Telegram of {strategy.title()} settings",
+                 key=f"{strategy}_savenotify"):
+        tg.send_message(f"⚙️ <b>{strategy.title()} settings</b>\n" + tg.build_status_text())
+        st.success("Telegram notified ✅ (settings already saved live / via each Apply button)")
 
 
 def _market_context_display(strategy):
@@ -1271,15 +1300,18 @@ def tab_settings():
                     db.save_setting(_k, _v)
             st.success("✅ Telegram keys saved (persist across restarts).")
             st.rerun()
-        bool_toggle("Notify Trade Open (entry)", "notify_trade_open", True)
-        bool_toggle("Notify Trade Close", "notify_trade_close", True)
-        bool_toggle("Notify Daily Report (00:00 UTC)", "notify_daily_report", True)
-        bool_toggle("Notify Risk Alert", "notify_risk_alert", True)
-        bool_toggle("Notify Engine Stop", "notify_engine_stop", True)
-        st.markdown("---")
-        bool_toggle("🔄 Periodic Status Update", "notify_status_on", True)
-        slider("Status interval (hours)", "notify_status_interval_hr", 1.0, 24.0, 1.0,
-               db.get_float("notify_status_interval_hr", 4.0))
+        # Notification toggles batched — flip several, then one Apply (no rerun
+        # per toggle). Token/Chat + their Save button stay live above.
+        with settings_form("tg_notify", "💾 Apply Notification Settings"):
+            bool_toggle("Notify Trade Open (entry)", "notify_trade_open", True)
+            bool_toggle("Notify Trade Close", "notify_trade_close", True)
+            bool_toggle("Notify Daily Report (00:00 UTC)", "notify_daily_report", True)
+            bool_toggle("Notify Risk Alert", "notify_risk_alert", True)
+            bool_toggle("Notify Engine Stop", "notify_engine_stop", True)
+            st.markdown("---")
+            bool_toggle("🔄 Periodic Status Update", "notify_status_on", True)
+            slider("Status interval (hours)", "notify_status_interval_hr", 1.0, 24.0, 1.0,
+                   db.get_float("notify_status_interval_hr", 4.0))
         cols_tg = st.columns(2)
         if cols_tg[0].button("📤 Test Telegram"):
             if tg.test_telegram():
@@ -1294,9 +1326,10 @@ def tab_settings():
                 st.error("Set token first")
 
     with st.expander("🧹 7. VPS Optimizer", expanded=False):
-        bool_toggle("Auto Clean", "vps_auto_clean_on", True)
-        slider("RAM Threshold %", "vps_ram_threshold_pct", 50.0, 90.0, 1.0,
-               db.get_float("vps_ram_threshold_pct", 80.0))
+        with settings_form("vps_opt", "💾 Apply VPS Settings"):
+            bool_toggle("Auto Clean", "vps_auto_clean_on", True)
+            slider("RAM Threshold %", "vps_ram_threshold_pct", 50.0, 90.0, 1.0,
+                   db.get_float("vps_ram_threshold_pct", 80.0))
         st.write(f"Current RAM: {vps_optimizer.current_ram_pct():.1f}%")
         st.caption(f"Last clean: {db.get_setting('vps_last_clean', '—')}")
         if st.button("🧽 Clean Now"):
@@ -1362,9 +1395,11 @@ def tab_settings():
             st.success("Restored. Now restart the service: `systemctl restart futures-bot`")
 
     st.divider()
-    if st.button("💾 SAVE ALL SETTINGS", type="primary"):
+    st.caption("ℹ️ Settings save automatically as you change them, or via each "
+               "section's **Apply** button — there is no separate 'save all' step.")
+    if st.button("📤 Notify Telegram of current settings"):
         tg.notify_settings_saved()
-        st.success("All settings saved ✅ (Telegram notified if configured)")
+        st.success("Telegram notified ✅ (your settings are already saved)")
 
 
 # ===========================================================================
