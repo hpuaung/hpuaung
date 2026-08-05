@@ -188,6 +188,16 @@ def init_db():
         if "entry_features" not in existing_cols:
             c.execute("ALTER TABLE active_positions ADD COLUMN entry_features TEXT")
 
+        # Migration: record the planned SL/TP1 on the CLOSED trade too. Without
+        # them the risk distance is unknown after the fact, so the realised
+        # R-multiple (did the 1:3 actually pay 3R?) cannot be measured — which is
+        # exactly what the forward test has to verify.
+        trade_cols = {r[1] for r in c.execute("PRAGMA table_info(trades)").fetchall()}
+        if "sl_price" not in trade_cols:
+            c.execute("ALTER TABLE trades ADD COLUMN sl_price REAL")
+        if "tp1_price" not in trade_cols:
+            c.execute("ALTER TABLE trades ADD COLUMN tp1_price REAL")
+
         conn.commit()
     _seed_defaults()
     _seed_from_env()
