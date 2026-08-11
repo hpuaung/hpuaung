@@ -172,131 +172,132 @@ def stat(t, span_days):
                 per30=(len(t) / span_days * 30 if span_days > 0 else 0))
 
 
-print("=" * 86)
-print("YOUR STRATEGY — EMA(9/21/200)+slope · RSI 55/45 cross · Stoch 20/80 cross")
-print("                + clean close beyond EMA9/21 · SL = 1.5xATR")
-print(f"pairs={len(PAIRS)}   slope>={SLOPE_MIN} ATR/bar   windows tested={WINDOWS}")
-print("=" * 86)
+if __name__ == "__main__":
+    print("=" * 86)
+    print("YOUR STRATEGY — EMA(9/21/200)+slope · RSI 55/45 cross · Stoch 20/80 cross")
+    print("                + clean close beyond EMA9/21 · SL = 1.5xATR")
+    print(f"pairs={len(PAIRS)}   slope>={SLOPE_MIN} ATR/bar   windows tested={WINDOWS}")
+    print("=" * 86)
 
-overall_best = []
+    overall_best = []
 
-for tf in TIMEFRAMES:
-    limit = CANDLES.get(tf, 1500)
-    prepared = []
-    span_days = 0.0
-    print(f"\n[progress] {tf}: fetching {len(PAIRS)} pairs (limit {limit}) ...", flush=True)
-    for pi, sym in enumerate(PAIRS, 1):
-        try:
-            raw = bc.get_ohlcv_deep(sym, tf, limit, api_mode="real")
-            if raw is None or len(raw) < WARMUP + 60:
+    for tf in TIMEFRAMES:
+        limit = CANDLES.get(tf, 1500)
+        prepared = []
+        span_days = 0.0
+        print(f"\n[progress] {tf}: fetching {len(PAIRS)} pairs (limit {limit}) ...", flush=True)
+        for pi, sym in enumerate(PAIRS, 1):
+            try:
+                raw = bc.get_ohlcv_deep(sym, tf, limit, api_mode="real")
+                if raw is None or len(raw) < WARMUP + 60:
+                    continue
+                prepared.append(prepare(raw))
+                span_days = max(span_days, len(prepared[-1]) * TF_HOURS.get(tf, 1) / 24.0)
+                if pi % 10 == 0:
+                    print(f"[progress]   {pi}/{len(PAIRS)}", flush=True)
+            except Exception as e:  # noqa: BLE001
+                print(f"[progress]   {sym}: err {str(e)[:40]}", flush=True)
                 continue
-            prepared.append(prepare(raw))
-            span_days = max(span_days, len(prepared[-1]) * TF_HOURS.get(tf, 1) / 24.0)
-            if pi % 10 == 0:
-                print(f"[progress]   {pi}/{len(PAIRS)}", flush=True)
-        except Exception as e:  # noqa: BLE001
-            print(f"[progress]   {sym}: err {str(e)[:40]}", flush=True)
+        if not prepared:
+            print(f"==== {tf}: no data ====")
             continue
-    if not prepared:
-        print(f"==== {tf}: no data ====")
-        continue
 
-    kind = "SCALP" if TF_HOURS.get(tf, 1) < 4 else "SWING"
-    print(f"\n{'='*86}\n{tf}  [{kind}]   ~{span_days:.0f} days history, {len(prepared)} pairs\n{'='*86}")
+        kind = "SCALP" if TF_HOURS.get(tf, 1) < 4 else "SWING"
+        print(f"\n{'='*86}\n{tf}  [{kind}]   ~{span_days:.0f} days history, {len(prepared)} pairs\n{'='*86}")
 
-    # --- A. where do the rules collapse? progressive AND at the widest window
-    wmax = max(WINDOWS)
-    counts = []
-    for label, kw in (("EMA stack", dict(use_slope=False, use_rsi=False, use_stoch=False, use_pa=False)),
-                      ("+ slope", dict(use_rsi=False, use_stoch=False, use_pa=False)),
-                      ("+ RSI cross", dict(use_stoch=False, use_pa=False)),
-                      ("+ Stoch cross", dict(use_pa=False)),
-                      ("+ price action (FULL)", dict())):
-        tot = 0
-        for d in prepared:
-            b, s = signals(d, wmax, **kw)
-            tot += int(b.sum() + s.sum())
-        counts.append((label, tot))
-    print(f"  signal bars, adding one rule at a time (window={wmax}):")
-    for label, tot in counts:
-        print(f"    {label:24} {tot:>7}")
-    if counts[-1][1] == 0:
-        print("    ⚠️  the FULL rule set never triggers on this timeframe.")
+        # --- A. where do the rules collapse? progressive AND at the widest window
+        wmax = max(WINDOWS)
+        counts = []
+        for label, kw in (("EMA stack", dict(use_slope=False, use_rsi=False, use_stoch=False, use_pa=False)),
+                          ("+ slope", dict(use_rsi=False, use_stoch=False, use_pa=False)),
+                          ("+ RSI cross", dict(use_stoch=False, use_pa=False)),
+                          ("+ Stoch cross", dict(use_pa=False)),
+                          ("+ price action (FULL)", dict())):
+            tot = 0
+            for d in prepared:
+                b, s = signals(d, wmax, **kw)
+                tot += int(b.sum() + s.sum())
+            counts.append((label, tot))
+        print(f"  signal bars, adding one rule at a time (window={wmax}):")
+        for label, tot in counts:
+            print(f"    {label:24} {tot:>7}")
+        if counts[-1][1] == 0:
+            print("    ⚠️  the FULL rule set never triggers on this timeframe.")
 
-    # --- B. how many entries at each confirmation window
-    print(f"  entries by confirmation window:")
-    win_counts = {}
-    for w in WINDOWS:
-        tot = 0
-        for d in prepared:
-            b, s = signals(d, w)
-            tot += int(b.sum() + s.sum())
-        win_counts[w] = tot
-        print(f"    W={w:<3} {tot:>7} signal bars")
+        # --- B. how many entries at each confirmation window
+        print(f"  entries by confirmation window:")
+        win_counts = {}
+        for w in WINDOWS:
+            tot = 0
+            for d in prepared:
+                b, s = signals(d, w)
+                tot += int(b.sum() + s.sum())
+            win_counts[w] = tot
+            print(f"    W={w:<3} {tot:>7} signal bars")
 
-    # --- C. R:R sweep at the smallest window that produces enough trades
-    usable = [w for w in WINDOWS if win_counts[w] >= MIN_TRADES]
-    if not usable:
-        print(f"  → fewer than {MIN_TRADES} signals at every window; nothing to measure.")
-        continue
-    w_use = usable[0]
-    print(f"\n  R:R sweep at W={w_use}:")
-    print(f"  {'R:R':>6}{'n':>7}{'win%':>6}{'expR':>9}{'PF':>7}{'entries/30d':>13}")
-    for rr in RRS:
-        t = []
-        for d in prepared:
-            b, s = signals(d, w_use)
-            t += simulate(d, b, s, rr)
-        st = stat(t, span_days)
-        if not st:
-            print(f"  {'1:'+f'{rr:g}':>6}{'0':>7}   no trades")
+        # --- C. R:R sweep at the smallest window that produces enough trades
+        usable = [w for w in WINDOWS if win_counts[w] >= MIN_TRADES]
+        if not usable:
+            print(f"  → fewer than {MIN_TRADES} signals at every window; nothing to measure.")
             continue
-        edge = st["exp"] > 0 and st["pf"] > 1.3 and st["n"] >= MIN_TRADES
-        print(f"  {'1:'+f'{rr:g}':>6}{st['n']:>7}{st['win']:>6}{st['exp']:>+9.3f}"
-              f"{st['pf']:>7.2f}{st['per30']:>13.1f}" + ("  EDGE" if edge else ""))
-        if edge:
-            overall_best.append((tf, rr, w_use, st))
+        w_use = usable[0]
+        print(f"\n  R:R sweep at W={w_use}:")
+        print(f"  {'R:R':>6}{'n':>7}{'win%':>6}{'expR':>9}{'PF':>7}{'entries/30d':>13}")
+        for rr in RRS:
+            t = []
+            for d in prepared:
+                b, s = signals(d, w_use)
+                t += simulate(d, b, s, rr)
+            st = stat(t, span_days)
+            if not st:
+                print(f"  {'1:'+f'{rr:g}':>6}{'0':>7}   no trades")
+                continue
+            edge = st["exp"] > 0 and st["pf"] > 1.3 and st["n"] >= MIN_TRADES
+            print(f"  {'1:'+f'{rr:g}':>6}{st['n']:>7}{st['win']:>6}{st['exp']:>+9.3f}"
+                  f"{st['pf']:>7.2f}{st['per30']:>13.1f}" + ("  EDGE" if edge else ""))
+            if edge:
+                overall_best.append((tf, rr, w_use, st))
 
-    # --- D. ablation: which rule earns its place
-    print(f"\n  ablation @ R:R 1:2, W={w_use} — which rule helps?")
-    print(f"  {'variant':26}{'n':>7}{'win%':>6}{'expR':>9}{'PF':>7}")
-    for label, kw in (("ALL rules (as specified)", dict()),
-                      ("without slope", dict(use_slope=False)),
-                      ("without RSI cross", dict(use_rsi=False)),
-                      ("without Stoch cross", dict(use_stoch=False)),
-                      ("without price action", dict(use_pa=False)),
-                      ("EMA stack ONLY", dict(use_slope=False, use_rsi=False,
-                                              use_stoch=False, use_pa=False))):
-        t = []
-        for d in prepared:
-            b, s = signals(d, w_use, **kw)
-            t += simulate(d, b, s, 2.0)
-        st = stat(t, span_days)
-        if not st:
-            print(f"  {label:26}{'0':>7}   no trades")
-            continue
-        print(f"  {label:26}{st['n']:>7}{st['win']:>6}{st['exp']:>+9.3f}{st['pf']:>7.2f}")
+        # --- D. ablation: which rule earns its place
+        print(f"\n  ablation @ R:R 1:2, W={w_use} — which rule helps?")
+        print(f"  {'variant':26}{'n':>7}{'win%':>6}{'expR':>9}{'PF':>7}")
+        for label, kw in (("ALL rules (as specified)", dict()),
+                          ("without slope", dict(use_slope=False)),
+                          ("without RSI cross", dict(use_rsi=False)),
+                          ("without Stoch cross", dict(use_stoch=False)),
+                          ("without price action", dict(use_pa=False)),
+                          ("EMA stack ONLY", dict(use_slope=False, use_rsi=False,
+                                                  use_stoch=False, use_pa=False))):
+            t = []
+            for d in prepared:
+                b, s = signals(d, w_use, **kw)
+                t += simulate(d, b, s, 2.0)
+            st = stat(t, span_days)
+            if not st:
+                print(f"  {label:26}{'0':>7}   no trades")
+                continue
+            print(f"  {label:26}{st['n']:>7}{st['win']:>6}{st['exp']:>+9.3f}{st['pf']:>7.2f}")
 
-print("\n" + "=" * 86)
-print("RANKED — combos clearing expR>0, PF>1.3, n>=30")
-print("=" * 86)
-if not overall_best:
-    print("  NONE — on this data the system does not clear the edge bar at any")
-    print("  timeframe or R:R tested. The per-timeframe tables above show whether")
-    print("  that is because it never triggers, or because it triggers and loses.")
-else:
-    print(f"{'timeframe':11}{'R:R':>6}{'W':>4}{'PF':>7}{'expR':>9}{'n':>7}{'entries/30d':>13}")
-    for tf, rr, w, st in sorted(overall_best, key=lambda x: -x[3]["pf"]):
-        print(f"{tf:11}{'1:'+f'{rr:g}':>6}{w:>4}{st['pf']:>7.2f}{st['exp']:>+9.3f}"
-              f"{st['n']:>7}{st['per30']:>13.1f}")
+    print("\n" + "=" * 86)
+    print("RANKED — combos clearing expR>0, PF>1.3, n>=30")
+    print("=" * 86)
+    if not overall_best:
+        print("  NONE — on this data the system does not clear the edge bar at any")
+        print("  timeframe or R:R tested. The per-timeframe tables above show whether")
+        print("  that is because it never triggers, or because it triggers and loses.")
+    else:
+        print(f"{'timeframe':11}{'R:R':>6}{'W':>4}{'PF':>7}{'expR':>9}{'n':>7}{'entries/30d':>13}")
+        for tf, rr, w, st in sorted(overall_best, key=lambda x: -x[3]["pf"]):
+            print(f"{tf:11}{'1:'+f'{rr:g}':>6}{w:>4}{st['pf']:>7.2f}{st['exp']:>+9.3f}"
+                  f"{st['n']:>7}{st['per30']:>13.1f}")
 
-print("\n" + "=" * 86)
-print("HOW TO READ")
-print("=" * 86)
-print("• 'signal bars, adding one rule at a time' shows WHERE the system dies: if")
-print("  the count collapses to 0 when a rule is added, that rule contradicts the")
-print("  others (e.g. Stoch crossing UP through 20 happens at a LOW, while the")
-print("  price-action rule demands a close ABOVE the EMAs — opposite moments).")
-print("• In the ablation, if removing a rule RAISES PF, that rule costs money.")
-print("• Benchmark, same pairs/fees/slippage: trend-12h 1:3 PF ~1.54,")
-print("  trend-6h 1:3 PF ~1.32. Beat that and it is worth switching to.")
+    print("\n" + "=" * 86)
+    print("HOW TO READ")
+    print("=" * 86)
+    print("• 'signal bars, adding one rule at a time' shows WHERE the system dies: if")
+    print("  the count collapses to 0 when a rule is added, that rule contradicts the")
+    print("  others (e.g. Stoch crossing UP through 20 happens at a LOW, while the")
+    print("  price-action rule demands a close ABOVE the EMAs — opposite moments).")
+    print("• In the ablation, if removing a rule RAISES PF, that rule costs money.")
+    print("• Benchmark, same pairs/fees/slippage: trend-12h 1:3 PF ~1.54,")
+    print("  trend-6h 1:3 PF ~1.32. Beat that and it is worth switching to.")
