@@ -35,16 +35,21 @@ db.init_db()
 _a = sys.argv[1:]
 TIMEFRAMES = [x.strip() for x in
               (_a[0] if len(_a) > 0 else "1h,4h,6h,12h").split(",") if x.strip()]
+# Optional 2nd arg: candles per pair, overriding the per-timeframe default. The
+# whole point of the deep re-run is to grow the sample — n=78 was too thin to
+# tell a real edge from a lucky one.
+LIMIT_OVERRIDE = int(_a[1]) if len(_a) > 1 else None
+
 PAIRS = [p.strip() for p in db.get_setting(
     "selected_pairs", "BTCUSDT,ETHUSDT,SOLUSDT").split(",") if p.strip()]
 
 WINDOWS = [5, 10, 20, 30]
 RRS = [1.5, 2.0, 3.0]
+# The RSI cross and the price-action rule were dropped: the ablation showed both
+# cost trades AND PF. What is left is what actually earned its place.
 RULESETS = [
-    ("FULL (as you wrote it)", dict()),
-    ("no RSI cross",           dict(use_rsi=False)),
-    ("no price action",        dict(use_pa=False)),
     ("CORE (EMA+slope+Stoch)", dict(use_rsi=False, use_pa=False)),
+    ("CORE + RSI (no PA)",     dict(use_pa=False)),
 ]
 N_TRUST = 100      # below this, PF is not trustworthy
 N_WALK = 60        # minimum sample to attempt a 3-era walk-forward
@@ -110,7 +115,7 @@ print("=" * 92)
 candidates = []   # (tf, label, w, rr, st, trades)
 
 for tf in TIMEFRAMES:
-    limit = CANDLES.get(tf, 1500)
+    limit = LIMIT_OVERRIDE or CANDLES.get(tf, 1500)
     prepared = []
     span_days = 0.0
     print(f"\n[progress] {tf}: fetching {len(PAIRS)} pairs (limit {limit}) ...", flush=True)
