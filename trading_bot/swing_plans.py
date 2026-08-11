@@ -52,6 +52,7 @@ def _clean_slot(slot, *, on, tf, trend, breakout, reversion):
         f"{slot}_trend_on": "1" if trend else "0",
         f"{slot}_breakout_on": "1" if breakout else "0",
         f"{slot}_reversion_on": "1" if reversion else "0", f"{slot}_hybrid_on": "0",
+        f"{slot}_emastoch_on": "0",
         f"{slot}_auto_risk": "1", f"{slot}_auto_tpsl": "1",
         f"{slot}_partial_tp": "0", f"{slot}_auto_be": "0", f"{slot}_trail_auto": "0",
         f"{slot}_auto_maxhold": "0", f"{slot}_max_hold_days": "30",

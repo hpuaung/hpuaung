@@ -777,8 +777,9 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
         # next scan. Inside a form so the choice can't be snapped back by a rerun.
         # Trend / Breakout are the walk-forward-robust edges (best on 6h); Reversion
         # is the RSI<20 scalper (decays across eras — paper-watch only).
-        _opts = ["Trend", "Breakout", "Reversion"]
-        _cur = ("Trend" if db.get_bool(f"{strategy}_trend_on")
+        _opts = ["Trend", "Breakout", "Reversion", "EMA+Stoch (yours)"]
+        _cur = ("EMA+Stoch (yours)" if db.get_bool(f"{strategy}_emastoch_on")
+                else "Trend" if db.get_bool(f"{strategy}_trend_on")
                 else "Breakout" if db.get_bool(f"{strategy}_breakout_on")
                 else "Reversion" if db.get_bool(f"{strategy}_reversion_on") else "Trend")
         with st.form(f"{strategy}_strategy_form"):
@@ -793,6 +794,8 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
             db.save_setting(f"{strategy}_trend_on", "1" if _pick == "Trend" else "0")
             db.save_setting(f"{strategy}_breakout_on", "1" if _pick == "Breakout" else "0")
             db.save_setting(f"{strategy}_reversion_on", "1" if _pick == "Reversion" else "0")
+            db.save_setting(f"{strategy}_emastoch_on",
+                            "1" if _pick == "EMA+Stoch (yours)" else "0")
             db.save_setting(f"{strategy}_hybrid_on", "0")
             # R:R routing: reversion sets its own TP via reversion_fixed_rr, so
             # scalping_fixed_rr must be 0 then (avoids double-override); trend/

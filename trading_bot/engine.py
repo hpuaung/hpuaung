@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 import database as db
 from utils import binance_client as bc
 from utils import indicators, news
-from strategies import trend, reversion, breakout, ai_hybrid
+from strategies import trend, reversion, breakout, ai_hybrid, emastoch
 from execution import risk_guard, orders, position_manager
 from notifications import telegram_bot as tg
 
@@ -106,17 +106,21 @@ def aggregate_signal(symbol, strategy, df_entry, df_confirm, df_trend,
     trend_on = db.get_bool(f"{strategy}_trend_on", True)
     reversion_on = db.get_bool(f"{strategy}_reversion_on", True)
     breakout_on = db.get_bool(f"{strategy}_breakout_on", True)
+    # EMA-stack + Stochastic pullback (the user's own, walk-forward validated:
+    # 6h 1:3 PF 1.74 n=203, newest era strongest). Off unless explicitly enabled.
+    emastoch_on = db.get_bool(f"{strategy}_emastoch_on", False)
     trend_res = trend.run(df_entry, df_confirm, df_trend, mtf) if trend_on else None
     rev_res = reversion.run(df_entry, df_confirm, df_trend, mtf) if reversion_on else None
     brk_res = breakout.run(df_entry, df_confirm, df_trend, mtf) if breakout_on else None
+    ems_res = emastoch.run(df_entry, df_confirm, df_trend, mtf) if emastoch_on else None
 
-    enabled = [s for s in (trend_res, rev_res, brk_res) if s is not None]
+    enabled = [s for s in (trend_res, rev_res, brk_res, ems_res) if s is not None]
     if not enabled:
         return {"signal": "NONE"}, "", 0.0
 
     triggered = "+".join(
         name for name, res in [("Trend", trend_res), ("Reversion", rev_res),
-                               ("Breakout", brk_res)]
+                               ("Breakout", brk_res), ("EmaStoch", ems_res)]
         if res and res["signal"] != "NONE"
     )
     non_none = [s for s in enabled if s["signal"] != "NONE"]
