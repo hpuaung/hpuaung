@@ -107,22 +107,28 @@ print("\n" + "-" * 74)
 print("CONFIG (must match the validated edge)")
 print("-" * 74)
 cfg_ok = True
+# Each slot must run EXACTLY ONE validated strategy on its validated timeframe:
+#   swing    = trend on 12h        (PF 1.54, n=371)
+#   scalping = EMA+Stoch on 6h     (PF 1.74, n=203 — the user's own, newest era
+#                                   strongest, parity-checked against the backtest)
 EXPECT = {
-    "swing":    {"tf": "12h", "trend": True, "rr": 3.0},
-    "scalping": {"tf": "6h",  "trend": True, "rr": 3.0},
+    "swing":    {"tf": "12h", "key": "trend_on",    "name": "trend",     "rr": 3.0},
+    "scalping": {"tf": "6h",  "key": "emastoch_on", "name": "EMA+Stoch", "rr": 3.0},
 }
+ALL_STRATS = ("trend_on", "breakout_on", "reversion_on", "emastoch_on", "hybrid_on")
 for slot, want in EXPECT.items():
     on = db.get_bool(f"{slot}_bot_on", False)
     mode = db.get_setting(f"{slot}_mode", "paper")
     tf = db.get_setting(f"{slot}_timeframe", "?")
-    trend = db.get_bool(f"{slot}_trend_on", False)
-    rev = db.get_bool(f"{slot}_reversion_on", False)
     rr = db.get_float(f"{slot}_fixed_rr", 0.0)
-    good = (on and mode == "paper" and tf == want["tf"] and trend == want["trend"]
-            and not rev and abs(rr - want["rr"]) < 0.01)
+    active = [k for k in ALL_STRATS if db.get_bool(f"{slot}_{k}", False)]
+    good = (on and mode == "paper" and tf == want["tf"]
+            and active == [want["key"]] and abs(rr - want["rr"]) < 0.01)
     cfg_ok = cfg_ok and good
-    print(f"  {slot:9} on={on!s:5} mode={mode:5} tf={tf:4} trend={trend!s:5} "
-          f"rev={rev!s:5} rr={rr:g}  {'✅' if good else '❌ EXPECTED tf=' + want['tf'] + ' trend=on rr=3 paper'}")
+    shown = ",".join(a.replace("_on", "") for a in active) or "none"
+    print(f"  {slot:9} on={on!s:5} mode={mode:5} tf={tf:4} strategy={shown:12} "
+          f"rr={rr:g}  " + ("✅" if good else
+                            f"❌ EXPECTED {want['name']} on {want['tf']} rr=3 paper"))
 print(f"  {'risk':9} max_concurrent={db.get_int('max_concurrent_trades',5)} "
       f"swing_corr={db.get_bool('swing_corr_filter',False)}/{db.get_int('swing_max_corr_trades',3)} "
       f"scalp_corr={db.get_bool('scalping_corr_filter',False)}/{db.get_int('scalping_max_corr_trades',2)}")
@@ -223,6 +229,24 @@ for t in T:
 print("\n  by close reason:")
 for k, v in sorted(by_reason.items(), key=lambda kv: -len(kv[1])):
     print(f"    {k:12} n={len(v):<3} net=${sum(v):+7.2f}")
+
+# The two slots run DIFFERENT validated strategies, so they have to be scored
+# separately — an average across both hides which one is actually working.
+print("\n  by engine (swing = trend-12h · scalping = EMA+Stoch-6h):")
+for slot in ("swing", "scalping"):
+    rows = [t for t in T if str(t.get("strategy")) == slot]
+    if not rows:
+        print(f"    {slot:9} no closed trades yet")
+        continue
+    nets = [num(t.get("net_pnl")) for t in rows]
+    w = [x for x in nets if x > 0]
+    gl = -sum(x for x in nets if x <= 0)
+    p = (sum(w) / gl) if gl > 0 else 99.0
+    rl = [r_multiple(t) for t in rows]
+    rl = [r for r in rl if r is not None]
+    ravg = f"{sum(rl)/len(rl):+.2f}R" if rl else "n/a"
+    print(f"    {slot:9} n={len(rows):<3} net=${sum(nets):+7.2f} "
+          f"win%={100*len(w)//len(rows):<3} PF={p:.2f}  avgR={ravg}")
 
 # --- VERDICT ----------------------------------------------------------------
 print("\n" + "=" * 74)
