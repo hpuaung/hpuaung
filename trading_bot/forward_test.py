@@ -266,11 +266,25 @@ elif resolved < 10:
           f"(need ~10 to judge execution).")
     print("   Everything checked so far looks correct. Leave the bot alone and re-run")
     print("   in a day or two. Do NOT press Stop-All / Emergency Close.")
+elif not tp_rs:
+    # HARD GATE. The stop side proving out says nothing about the target side.
+    # Without a single TP close, "wins pay ~3R" has never been observed, and a
+    # 1:3 system lives entirely on those wins — so this can NEVER be reported as
+    # confirmed. (An earlier version did exactly that after 15 straight losses.)
+    print(f"❌ NOT CONFIRMED — {resolved} trades resolved and NOT ONE reached target.")
+    print(f"   Losses behave correctly (avg {sum(sl_rs)/len(sl_rs):+.2f}R, as sized), so the")
+    print("   machinery is sound. But the +3R side has never happened, so the half")
+    print("   of the R:R that MAKES the money is still completely untested.")
+    print(f"\n   Win rate so far: 0 of {len(T)}. A 1:3 system needs ~25% wins just to")
+    print("   break even. Zero is far outside that — either the market period was")
+    print("   hostile to this setup, or the edge is not there in the current regime.")
+    print("\n   Do NOT go to real money on this.")
 else:
     print("✅ EXECUTION CONFIRMED — entries are live-priced, wins pay ~3R, losses")
     print("   cost ~1R, no phantoms, no spirals, no interference.")
     print("   The machine faithfully executes the validated edge.")
     print(f"\n   Context: PF {pf:.2f} over {len(T)} trades (backtest expects ~1.4).")
+    print(f"   Verified on {len(tp_rs)} winning and {len(sl_rs)} losing closes.")
     print("   Next step: real money at the SMALLEST size you can trade, and keep")
     print("   measuring. Expect a thin, slow edge — not fast gains.")
 print("=" * 74)
