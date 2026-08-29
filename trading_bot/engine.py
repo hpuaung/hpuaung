@@ -419,7 +419,7 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
         equity=equity, multiplier=multiplier, api_mode=api_mode,
         paper_mode=paper_mode, funding_rate=funding_rate, open_interest=oi_change,
         session=session, lgbm_score=lgbm_score, news_score=news_score, health=health,
-        entry_features=entry_features,
+        entry_features=entry_features, strategy_name=(triggered or ""),
     )
     if pos_id:
         pos = db.get_position(pos_id)

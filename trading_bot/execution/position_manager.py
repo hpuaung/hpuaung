@@ -127,6 +127,8 @@ def _record_close(pos, qty, exit_price, reason, notifier=None):
         # the fact (|exit-entry| / |entry-sl|) — the forward test's core check.
         "sl_price": pos.get("sl_price"),
         "tp1_price": pos.get("tp1"),
+        "strategy_name": pos.get("strategy_name") or "",
+        "timeframe": pos.get("timeframe") or "",
         # default 1 (paper), not 0 — a missing flag must not mislabel a paper
         # trade as real (that also made clear_paper_trades miss them).
         "paper_mode": pos.get("paper_mode", 1),

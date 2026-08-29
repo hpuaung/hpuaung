@@ -197,6 +197,17 @@ def init_db():
             c.execute("ALTER TABLE trades ADD COLUMN sl_price REAL")
         if "tp1_price" not in trade_cols:
             c.execute("ALTER TABLE trades ADD COLUMN tp1_price REAL")
+        # `strategy` only ever held the SLOT name (swing/scalping). Over the bot's
+        # life the scalping slot ran reversion, then trend, then emastoch — all
+        # recorded identically — so "which strategy actually won?" was
+        # unanswerable from history. Record the firing strategy and the entry
+        # timeframe on every closed trade so that question can be answered.
+        if "strategy_name" not in trade_cols:
+            c.execute("ALTER TABLE trades ADD COLUMN strategy_name TEXT")
+        if "timeframe" not in trade_cols:
+            c.execute("ALTER TABLE trades ADD COLUMN timeframe TEXT")
+        if "strategy_name" not in existing_cols:
+            c.execute("ALTER TABLE active_positions ADD COLUMN strategy_name TEXT")
 
         conn.commit()
     _seed_defaults()

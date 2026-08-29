@@ -173,7 +173,8 @@ def _get_order(client, symbol, order_id):
 
 def execute_order(symbol, strategy, signal, *, equity, multiplier, api_mode,
                   paper_mode, funding_rate=0.0, open_interest=0.0, session="",
-                  lgbm_score=0.0, news_score=0.0, health=100.0, entry_features=None):
+                  lgbm_score=0.0, news_score=0.0, health=100.0, entry_features=None,
+                  strategy_name=""):
     """
     Place (or simulate) an order from a final signal. Returns the new
     active_positions row id, or None if blocked/failed.
@@ -221,6 +222,9 @@ def execute_order(symbol, strategy, signal, *, equity, multiplier, api_mode,
         "funding_rate": funding_rate,
         "open_interest": open_interest,
         "session": session,
+        # Which strategy MODULE fired (Trend/Breakout/EmaStoch/...), as opposed to
+        # `strategy` which is only the slot name. Needed to attribute results.
+        "strategy_name": strategy_name or "",
         "lgbm_score": lgbm_score,
         "news_score": news_score,
         "effective_leverage": sized["eff_lev"],
