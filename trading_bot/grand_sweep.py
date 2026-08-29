@@ -27,6 +27,7 @@ the target is set by the R:R multiple.
   cd /root/hpuaung/trading_bot && .venv/bin/python grand_sweep.py
   .venv/bin/python grand_sweep.py 1h,4h,6h,12h 1500
 """
+import gc
 import sys
 import statistics
 import warnings
@@ -64,15 +65,22 @@ WARMUP = 210
 MAXHOLD = 200
 MIN_N = 40          # below this the numbers are noise
 
-# Deep history on purpose. A walk-forward is only meaningful if the three eras
-# are genuinely different market regimes, and that needs CALENDAR span, not just
-# a bar count — 3000 bars of 30m is barely two months, i.e. one regime. These
-# counts give each timeframe roughly half a year to five years, paged back from
-# Binance (get_ohlcv_deep). NOTE: this uses real historical MARKET data, not the
-# bot's own 44-trade log — the trade log records what the bot did, while market
-# data is what lets any other timeframe/R:R be tested at all.
-CANDLES = {"15m": 8000, "30m": 8000, "1h": 8000, "2h": 5000,
-           "4h": 4000, "6h": 4000, "8h": 3000, "12h": 3000, "1d": 2000}
+# History per timeframe, balanced against the box it runs on. A walk-forward is
+# only meaningful if the three eras are genuinely different market regimes, which
+# needs CALENDAR span rather than bar count — but this VPS has 1GB and is also
+# running the engine and the dashboard, and a single pandas process costs ~250MB
+# just to import. Running all six timeframes at once (or two copies of this
+# script) exhausts memory and the OOM killer takes sshd with it.
+#
+# So: modest counts, one pair loaded at a time and freed immediately, and the
+# higher timeframes still reach years of history because each candle is long.
+# Prefer TWO timeframes per invocation over all six.
+#
+# NOTE: this reads real historical MARKET data, not the bot's own trade log —
+# the log records only what the bot did under one config, while market data is
+# what makes any other timeframe/R:R testable at all.
+CANDLES = {"15m": 4000, "30m": 4000, "1h": 4000, "2h": 3000,
+           "4h": 3000, "6h": 2500, "8h": 2000, "12h": 2000, "1d": 1500}
 TF_HOURS = {"15m": .25, "30m": .5, "1h": 1, "2h": 2, "4h": 4,
             "6h": 6, "8h": 8, "12h": 12, "1d": 24}
 
@@ -184,12 +192,19 @@ for tf in TIMEFRAMES:
             for s in STRATS:
                 for rr in RRS:
                     agg[(s, rr)] += simulate(d, sigs[s], rr)
+            # Free this pair's frames before loading the next one — on a 1GB box
+            # holding several 20-column indicator frames is what triggers the OOM
+            # that kills sshd mid-run.
+            del d, sigs, raw
+            gc.collect()
             if pi % 5 == 0:
                 print(f"[progress]   {pi}/{len(PAIRS)}", flush=True)
         except Exception as e:  # noqa: BLE001
             print(f"[progress]   {sym}: err {str(e)[:40]}", flush=True)
             continue
 
+    bc._ohlcv_cache.clear()
+    gc.collect()
     print(f"\n{'='*104}\n{tf}   ~{span_days:.0f} days history\n{'='*104}")
     print(f"{'strategy':11}{'R:R':>6}{'n':>7}{'win%':>6}{'expR':>9}{'PF':>7}"
           f"{'/30d':>8}{'holdD':>7}{'R/month':>9}  eras(1/2/3)      verdict")
