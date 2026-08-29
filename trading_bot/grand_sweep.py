@@ -64,8 +64,15 @@ WARMUP = 210
 MAXHOLD = 200
 MIN_N = 40          # below this the numbers are noise
 
-CANDLES = {"15m": 3000, "30m": 3000, "1h": 3000, "2h": 2000,
-           "4h": 2000, "6h": 1500, "8h": 1500, "12h": 1500, "1d": 1500}
+# Deep history on purpose. A walk-forward is only meaningful if the three eras
+# are genuinely different market regimes, and that needs CALENDAR span, not just
+# a bar count — 3000 bars of 30m is barely two months, i.e. one regime. These
+# counts give each timeframe roughly half a year to five years, paged back from
+# Binance (get_ohlcv_deep). NOTE: this uses real historical MARKET data, not the
+# bot's own 44-trade log — the trade log records what the bot did, while market
+# data is what lets any other timeframe/R:R be tested at all.
+CANDLES = {"15m": 8000, "30m": 8000, "1h": 8000, "2h": 5000,
+           "4h": 4000, "6h": 4000, "8h": 3000, "12h": 3000, "1d": 2000}
 TF_HOURS = {"15m": .25, "30m": .5, "1h": 1, "2h": 2, "4h": 4,
             "6h": 6, "8h": 8, "12h": 12, "1d": 24}
 
@@ -150,6 +157,12 @@ print("=" * 104)
 print("GRAND SWEEP — every strategy x timeframe x R:R, ranked by R PER MONTH")
 print(f"pairs={len(PAIRS)}  strategies={list(STRATS)}  R:R={RRS}")
 print("Each strategy keeps its own stop; only the target is set by the R:R.")
+print("\nDATA: real Binance historical klines (mainnet), fetched fresh per")
+print("timeframe — NOT the bot's own trade log. History requested per timeframe:")
+for _tf in TIMEFRAMES:
+    _lim = LIMIT_OVERRIDE or CANDLES.get(_tf, 1500)
+    print(f"  {_tf:5} {_lim:>6} candles ≈ {_lim*TF_HOURS.get(_tf,1)/24.0:>6.0f} days"
+          f"  x {len(PAIRS)} pairs")
 print("=" * 104)
 
 rows = []   # dicts of every measured combo
