@@ -169,6 +169,17 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
         if p["symbol"] == symbol:
             return
 
+    # Both slots now run on 12h, so Swing (trend) and Scalping (emastoch) can
+    # fire on the same symbol in the same direction and silently double the
+    # risk on that coin. Stop the second slot stacking onto a symbol the other
+    # one already holds. Logged so why_stuck.py shows it if it ever bites.
+    if db.get_bool("cross_slot_symbol_guard", True):
+        for p in db.get_open_positions():
+            if p["symbol"] == symbol and p["strategy"] != strategy:
+                db.log_event("CROSS_SLOT_BLOCK",
+                             f"{symbol} {strategy}: already held by {p['strategy']}")
+                return
+
     # Post-SL cooldown: after a stop loss the entry candle's signal is unchanged,
     # so re-entering immediately just repeats the same losing trade (this caused
     # the same SOL swing SELL to fire 5x in a row). Block re-entry on this
