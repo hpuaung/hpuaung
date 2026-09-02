@@ -1,17 +1,33 @@
-"""Show (and optionally apply) the configuration the grand sweep selected.
+"""Show (and optionally apply) the single configuration the grand sweep selected.
 
     .venv/bin/python apply_best.py            # show current vs target, change nothing
     .venv/bin/python apply_best.py --apply    # write the target settings
 
-Why these values -- from grand_sweep across 30m/1h/4h/6h/12h/1d x R:R 1..3 on
-38 pairs, fees and slippage included, gated on a 3-era walk-forward:
+THE PICK
+    swing = trend, 12h, R:R 1:3
+        R/month 2.99   PF 1.23   win 35%   n=652   ~7 targets hit per month
+        eras 1.22 / 1.11 / 1.53   (all three clear of 1.0, newest strongest)
 
-  swing    trend    12h 1:3   R/month 2.99  PF 1.23  n=652  eras 1.22/1.11/1.53
-  scalping emastoch 12h 1:2   R/month 1.55  PF 2.18  n=91   eras 1.49/3.39/2.30
+Chosen from the full sweep: 4 strategies x 6 timeframes (30m/1h/4h/6h/12h/1d)
+x 5 R:R = 120 cells, 38 pairs, fees and slippage modelled, gated on a 3-era
+walk-forward. 13 cells survived, every one of them at 12h or 1d -- nothing at
+6h or below survived on any strategy.
 
-Nothing at 6h or below survived the walk-forward on any strategy, so the
-scalping slot moves to 12h. reversion lost in all 20 timeframe/R:R cells it
-was tested in and is switched off in both slots.
+It is not the largest number in the table. breakout 1d 1:3 shows 3.37 R/month
+but its neighbours at 1:2 and 1:2.5 both fail and its newest era is 1.24
+against a 1.20 threshold, so it is an isolated cell. trend 12h 1:3 sits on a
+run of three passing R:R values and clears every era by a margin.
+
+EVERYTHING ELSE IS STOPPED
+    scalping_bot_on = 0 stops new scalping entries. Open positions are still
+    managed: engine.py calls position_manager.monitor_all() outside the
+    per-slot loop, so existing trades keep their stops and targets.
+    The scalping slot's own settings are left parked at emastoch 12h 1:2
+    (R/month 1.55, PF 2.18) -- the runner-up, ready if it is ever re-enabled.
+
+    ai_hybrid stays off in both slots. It short-circuits aggregate_signal,
+    forces in the reversion signal that lost all 20 cells it was tested in,
+    and is the one strategy the sweep never measured.
 """
 from __future__ import annotations
 
@@ -20,21 +36,19 @@ import sys
 import database as db
 
 TARGET = {
-    # ai_hybrid short-circuits aggregate_signal (engine.py:80): when it is on it
-    # runs trend+reversion+breakout itself, ignores every per-strategy toggle,
-    # and never reaches emastoch at all. It defaults to ON, it forces in the
-    # reversion signal that lost all 20 cells of the sweep, and it is the one
-    # strategy the sweep never measured. Off in both slots until it is tested.
+    # --- the pick: swing = trend 12h 1:3 -------------------------------------
+    "swing_bot_on": "1",
     "swing_hybrid_on": "0",
-    "scalping_hybrid_on": "0",
-    # swing slot -- already correct, listed so the whole picture is visible
     "swing_timeframe": "12h",
     "swing_trend_on": "1",
     "swing_breakout_on": "0",
     "swing_reversion_on": "0",
     "swing_emastoch_on": "0",
     "swing_fixed_rr": "3.0",
-    # scalping slot -- 6h -> 12h, native 3R -> 2R
+    # --- everything else stopped ---------------------------------------------
+    "scalping_bot_on": "0",
+    "scalping_hybrid_on": "0",
+    # parked config, only used if the slot is ever switched back on
     "scalping_timeframe": "12h",
     "scalping_trend_on": "0",
     "scalping_breakout_on": "0",
@@ -55,6 +69,12 @@ def main() -> int:
         print(f"{key:26}{cur:>12}{want:>12}{'' if same else '   <-- change'}")
         if not same:
             changes.append((key, cur, want))
+
+    open_scalp = [p for p in db.get_open_positions(strategy="scalping")]
+    if open_scalp:
+        print(f"\n{len(open_scalp)} scalping position(s) still open: "
+              f"{', '.join(p['symbol'] for p in open_scalp)}")
+        print("These keep their stops and targets -- only new entries stop.")
 
     if not changes:
         print("\nAlready configured as recommended. Nothing to do.")
