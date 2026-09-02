@@ -45,10 +45,9 @@ TARGET = {
     "swing_reversion_on": "0",
     "swing_emastoch_on": "0",
     "swing_fixed_rr": "3.0",
-    # --- everything else stopped ---------------------------------------------
-    "scalping_bot_on": "0",
+    # --- second slot: emastoch 12h 1:2 ---------------------------------------
+    "scalping_bot_on": "1",
     "scalping_hybrid_on": "0",
-    # parked config, only used if the slot is ever switched back on
     "scalping_timeframe": "12h",
     "scalping_trend_on": "0",
     "scalping_breakout_on": "0",
@@ -70,6 +69,8 @@ def main() -> int:
         if not same:
             changes.append((key, cur, want))
 
+    _projection()
+
     open_scalp = [p for p in db.get_open_positions(strategy="scalping")]
     if open_scalp:
         print(f"\n{len(open_scalp)} scalping position(s) still open: "
@@ -90,6 +91,45 @@ def main() -> int:
     print(f"\nWrote {len(changes)} setting(s). Restart the engine to pick them up:")
     print("  systemctl restart futures-engine")
     return 0
+
+
+# Straight from the sweep: (label, entries per 30d, win rate, R per month).
+SLOTS = [
+    ("swing", "trend 12h 1:3", 19.6, 0.35, 2.99),
+    ("scalping", "emastoch 12h 1:2", 2.7, 0.52, 1.55),
+]
+
+
+def _projection() -> None:
+    """Print what the two picked cells imply per month, at the configured risk."""
+    print(f"\n{'slot':10}{'config':22}{'entry/mo':>10}{'TP/mo':>8}{'SL/mo':>8}"
+          f"{'win%':>7}{'R/mo':>7}")
+    print("-" * 72)
+    tot_n = tot_tp = tot_r = 0.0
+    for slot, label, per30, win, rmonth in SLOTS:
+        tp = per30 * win
+        print(f"{slot:10}{label:22}{per30:>10.1f}{tp:>8.1f}{per30 - tp:>8.1f}"
+              f"{100 * win:>7.0f}{rmonth:>7.2f}")
+        tot_n += per30
+        tot_tp += tp
+        tot_r += rmonth
+    print("-" * 72)
+    print(f"{'TOTAL':32}{tot_n:>10.1f}{tot_tp:>8.1f}{tot_n - tot_tp:>8.1f}"
+          f"{100 * tot_tp / tot_n:>7.0f}{tot_r:>7.2f}")
+
+    print("\nR is one unit of risk, so the percentages depend on risk per trade:")
+    for slot, *_ in SLOTS:
+        auto = db.get_bool(f"{slot}_auto_risk", False)
+        base = db.get_float(f"{slot}_base_risk_pct", 0.0)
+        note = "  <-- auto risk is ON, so the real size is not this" if auto else ""
+        print(f"  {slot}_base_risk_pct = {base}{note}")
+    print(f"\n{'risk/trade':>12}{'month':>9}{'year (compounded)':>20}")
+    for risk in (0.5, 1.0, 1.5, 2.0):
+        m = tot_r * risk / 100.0
+        print(f"{risk:>11.1f}%{100 * m:>8.1f}%{100 * ((1 + m) ** 12 - 1):>19.0f}%")
+    print("\nThese are backtest expectations, not a forecast. A 37% win rate\n"
+          "means a run of ~12 straight losses somewhere in a year is normal,\n"
+          "and roughly 1 month in 4 finishes negative.")
 
 
 def _same_number(a: str, b: str) -> bool:
