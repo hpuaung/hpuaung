@@ -159,6 +159,16 @@ def main() -> int:
     for key, cur, want in changes:
         db.save_setting(key, want)
         db.log_event("CONFIG_APPLIED", f"{key}: {cur} -> {want}")
+
+    # Record what each slot is now set to, so the engine can tell if anything
+    # moves it afterwards. A setting that quietly overrode the intended setup
+    # used to be invisible for months; from here it is one Telegram message.
+    for slot in ("swing", "scalping"):
+        cid, desc = db.config_snapshot(slot)
+        db.save_setting(f"locked_config_{slot}", cid)
+        db.save_setting(f"drift_warned_{slot}", "")
+        print(f"  locked {slot}: {cid}  {desc}")
+
     print(f"\nWrote {len(changes)} setting(s). Restart the engine to pick them up:")
     print("  systemctl restart futures-engine")
     return 0

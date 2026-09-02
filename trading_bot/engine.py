@@ -163,6 +163,38 @@ def _engine_mode(strategy):
     return "real" if db.get_setting(f"{strategy}_mode", "paper") == "real" else "paper"
 
 
+def _warn_config_drift():
+    """Say so, loudly, if a slot is no longer running the config it was set to.
+
+    Months were lost to settings that quietly overrode the intended setup with
+    nothing to show it: the bot looked like it was running one thing while
+    trading another. apply_best.py records the config id it wrote; this
+    compares it against what is live every cycle and reports the first
+    divergence to the event log and Telegram.
+
+    It warns, it does not block. Every trade already carries its own config id,
+    so a drifted setting splits the record instead of corrupting it -- and a
+    guard that stops trading on its own judgement is the failure that cost this
+    bot months in the first place.
+    """
+    for slot in ("swing", "scalping"):
+        locked = db.get_setting(f"locked_config_{slot}", "")
+        if not locked:
+            continue
+        cid, desc = db.config_snapshot(slot)
+        if cid == locked:
+            continue
+        if db.get_setting(f"drift_warned_{slot}", "") == cid:
+            continue        # already reported this one; do not spam every cycle
+        db.save_setting(f"drift_warned_{slot}", cid)
+        msg = f"{slot} config changed: {locked} -> {cid} ({desc})"
+        db.log_event("CONFIG_DRIFT", msg)
+        try:
+            tg.send_message(f"⚠️ {msg}\nTrades from now on are recorded under {cid}.")
+        except Exception:  # noqa: BLE001  (a failed notify must not stop the loop)
+            pass
+
+
 def _winrate_floor(strategy, slack=0.8):
     """Win rate below which a context is a chronic loser, given the slot's R:R.
 
@@ -609,6 +641,8 @@ def _run_cycle():
 
     health = _enforce_health(primary_equity)
     multiplier = risk_guard.health_multiplier(health)
+
+    _warn_config_drift()
 
     if multiplier > 0:
         pairs = _selected_pairs()
