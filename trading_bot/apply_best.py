@@ -26,6 +26,14 @@ but its neighbours at 1:2 and 1:2.5 both fail and its newest era is 1.24
 against a 1.20 threshold, so it is an isolated cell. trend 12h 1:3 sits on a
 run of three passing R:R values and clears every era by a margin.
 
+THE EXITS HAVE TO MATCH TOO
+    Picking the right strategy is only half of it. The sweep measured a
+    specific way of leaving a trade -- the strategy's own stop, a full exit at
+    the target, up to 200 bars of patience -- and the bot was doing something
+    different on all three counts, every one of them cutting winners short.
+    Those settings are pinned here alongside the strategy choice; see the
+    comments in TARGET for what each was doing.
+
 EVERYTHING ELSE IS OFF
     breakout and reversion are off in both slots. reversion lost all 20
     timeframe/R:R cells it was tested in -- at 12h 1:1 its profit factor was
@@ -42,6 +50,37 @@ import sys
 import database as db
 
 TARGET = {
+    # --- make the live exits match the backtest ------------------------------
+    # The sweep measured one thing: enter, stop at the strategy's own stop,
+    # exit the whole position at the R:R target, allow up to 200 bars. The bot
+    # was doing none of that, and all three differences cut winners short --
+    # which is why 33 swing trades produced zero targets and an average win of
+    # $0.10 against an average loss of $0.82.
+    #
+    # 1. auto_pilot forces EVERY auto_* flag on regardless of its own setting
+    #    (database.auto_flag), so nothing below holds unless it is off.
+    "auto_pilot": "0",
+    # 2. atr_sl_enabled replaced each strategy's stop with 1.5 x ATR
+    #    (engine.py:288). The sweep used the strategy's own stop -- trend's is
+    #    EMA50, normally much wider -- so the live stop was tighter than the
+    #    one that was measured, and trades died in a median 1.4 days.
+    #    emastoch is unaffected: its own stop already is 1.5 x ATR.
+    "atr_sl_enabled": "0",
+    # 3. swing positions were force-closed at 7 days (position_manager.py:377,
+    #    hard-coded when swing_auto_maxhold is on; the manual default was 2).
+    #    The sweep allowed 200 bars = 100 days on 12h, and trend 12h 1:3 has a
+    #    median hold of 13.5 days -- so the winners were being guillotined
+    #    before they could reach 3R while the losers stopped out normally.
+    "swing_auto_maxhold": "0",
+    "swing_max_hold_days": "100",
+    # 4. partial_tp took 50% off at the target and moved the runner's stop to
+    #    near break-even. The sweep exits the whole position at the target.
+    "swing_partial_tp": "0",
+    "scalping_partial_tp": "0",
+    "swing_auto_be": "0",
+    "scalping_auto_be": "0",
+    "swing_trail_auto": "0",
+    "scalping_trail_auto": "0",
     # --- fixed risk ----------------------------------------------------------
     # auto_risk ignores base_risk_pct entirely (orders.py:24) and sizes from
     # risk_guard.recommended_risk(), which reads win rate alone and knows
