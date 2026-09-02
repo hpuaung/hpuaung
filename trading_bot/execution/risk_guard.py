@@ -59,14 +59,16 @@ def apply_health_guard(equity, starting_balance, strategy):
 # ---------------------------------------------------------------------------
 # Daily loss guard
 # ---------------------------------------------------------------------------
-def today_pnl():
-    trades = db.get_today_trades()
+def today_pnl(paper_mode=None):
+    trades = db.get_today_trades(paper_mode=paper_mode)
     return sum(float(t.get("net_pnl") or 0.0) for t in trades)
 
 
-def apply_daily_loss_guard(equity):
+def apply_daily_loss_guard(equity, paper_mode=None):
+    # paper_mode isolates this engine's ledger — a real engine's daily-loss
+    # circuit breaker must not be defeated (or falsely tripped) by paper PnL.
     limit_pct = db.get_float("daily_loss_limit_pct", 10.0)
-    pnl = today_pnl()
+    pnl = today_pnl(paper_mode=paper_mode)
     if equity > 0 and pnl < 0 and (abs(pnl) / equity * 100.0) >= limit_pct:
         return False, f"Daily loss {abs(pnl)/equity*100:.1f}% >= {limit_pct:.0f}%"
     return True, ""
@@ -168,8 +170,45 @@ def apply_session_filter(strategy):
 # ---------------------------------------------------------------------------
 # Concurrency guard
 # ---------------------------------------------------------------------------
-def apply_concurrency_guard():
-    max_trades = db.get_int("max_concurrent_trades", 5)
+def recommended_max_concurrent(equity):
+    """Auto cap on simultaneous open trades, scaled to account size so a small
+    balance is not spread across too many positions."""
+    if equity <= 0:
+        return 2
+    if equity < 100:
+        return 2
+    if equity < 1000:
+        return 4
+    if equity < 10000:
+        return 6
+    return 8
+
+
+def recommended_min_rr(strategy=None):
+    """Min risk:reward adapted from win-rate history: demand a higher reward
+    when losing (be pickier), allow a lower one when winning (take more)."""
+    wr, n = db.winrate(strategy)
+    if n < 15 or wr is None:
+        return 2.0  # default while learning
+    if wr < 45:
+        return 2.5  # losing: only the best setups
+    if wr < 55:
+        return 2.0  # break-even
+    return 1.8      # winning: a touch more permissive
+
+
+def global_auto_on():
+    """Global risk limits managed by the bot (master Auto Pilot or its own toggle)."""
+    return db.get_bool("auto_pilot", False) or db.get_bool("global_auto_risk", False)
+
+
+def apply_concurrency_guard(equity=None):
+    # Auto Pilot / Global Auto Risk → cap scales with balance; else manual slider.
+    if equity is not None and (db.get_bool("auto_pilot", False)
+                               or db.get_bool("global_auto_risk", False)):
+        max_trades = recommended_max_concurrent(equity)
+    else:
+        max_trades = db.get_int("max_concurrent_trades", 5)
     if db.count_open_positions() >= max_trades:
         return False, f"Max concurrent trades {max_trades} reached"
     return True, ""

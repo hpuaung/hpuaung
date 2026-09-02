@@ -298,6 +298,14 @@ Respond ONLY with this JSON (no markdown):
 def run_monitor():
     db.init_db()
 
+    # Durable off-switch. The monitor is a scalping-era auto-adjuster that removes
+    # low-win-rate pairs and tweaks risk — which contradicts the deployed
+    # breakout-1d approach (the OOS test proved pair-picking doesn't help and can
+    # hurt). Disabled by default so it can never silently mutate the config, even
+    # if a stale cron entry still fires. Set ai_monitor_on=1 to re-enable.
+    if not db.get_bool("ai_monitor_on", False):
+        return
+
     stats = _gather_stats()
     if stats is None:
         db.log_event("AI_MONITOR", "Trade data မလုံလောက်သေးဘူး (< 10 trades)")

@@ -1,0 +1,53 @@
+//@version=5
+// Bot Breakout-1d — TradingView Pine v5 recreation of the bot's live strategy,
+// for an INDEPENDENT cross-check. Put a symbol on the 1D chart, open Strategy
+// Tester. Replicates strategies/breakout.py as closely as Pine allows.
+//
+// NOTE (not 100% identical to the Python bot):
+//  - S/R here = prior 50-bar high/low. The bot uses levels "touched >= 3 times"
+//    (its fallback is exactly these extremes), so it's a close proxy, not exact.
+//  - Indicators assumed ATR(14) and Volume SMA(20) (the bot's defaults).
+//  - Single exit on SL / TP1 (matches strategy_backtest.py; the live bot also
+//    scales out at TP2/TP3, which this does not model).
+strategy("Bot Breakout-1d", overlay=true, initial_capital=1000,
+     default_qty_type=strategy.percent_of_equity, default_qty_value=100,
+     commission_type=strategy.commission.percent, commission_value=0.04,
+     slippage=2, calc_on_every_tick=false)
+
+// ── Inputs (match the bot) ─────────────────────────────────────────────
+lookback = input.int(50,   "S/R lookback (bars)")
+volMult  = input.float(1.5, "Volume spike x")
+atrMult  = input.float(1.1, "ATR expansion x")
+tpFrac   = input.float(0.5, "TP1 = consolidation height x")
+slBuf    = input.float(0.005, "SL buffer past level (0.5%)")
+consoLen = input.int(20,   "Consolidation window (closes)")
+
+// ── Indicators (match the bot) ─────────────────────────────────────────
+atr    = ta.atr(14)
+atrRef = ta.sma(atr, 5)
+volMa  = ta.sma(volume, 20)
+
+// S/R from the 50 bars BEFORE this one, so a new bar can break the level.
+res1 = ta.highest(high, lookback)[1]
+sup1 = ta.lowest(low,  lookback)[1]
+
+// Consolidation height = range of the last 20 closes.
+height = ta.highest(close, consoLen) - ta.lowest(close, consoLen)
+
+volSpike  = volume > volMa * volMult
+atrExpand = atr > atrRef * atrMult
+
+bull = close > res1 and close > close[1] and volSpike and atrExpand
+bear = close < sup1 and volSpike and atrExpand
+
+// ── Entries + exits (SL at broken level, TP1 target) ───────────────────
+if bull and strategy.position_size == 0
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Lx", "Long", stop=res1 * (1 - slBuf), limit=res1 + height * tpFrac)
+
+if bear and strategy.position_size == 0
+    strategy.entry("Short", strategy.short)
+    strategy.exit("Sx", "Short", stop=sup1 * (1 + slBuf), limit=sup1 - height * tpFrac)
+
+plot(res1, "Resistance", color.new(color.red, 40))
+plot(sup1, "Support",    color.new(color.green, 40))

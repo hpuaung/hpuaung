@@ -19,7 +19,7 @@ def _sizing(symbol, strategy, signal, equity, multiplier, api_mode):
     Compute effective leverage/risk and the order quantity. Returns a dict with
     sizing details or {"blocked": reason}.
     """
-    auto_risk = db.get_bool(f"{strategy}_auto_risk", True)
+    auto_risk = db.auto_flag(f"{strategy}_auto_risk", True)
 
     if auto_risk:
         # Fully automatic: base sized from balance + win-rate history, then
@@ -37,14 +37,59 @@ def _sizing(symbol, strategy, signal, equity, multiplier, api_mode):
     # Win/loss streak adjustment (added to the risk %).
     eff_risk = max(0.1, eff_risk + risk_guard.streak_risk_adjustment())
 
+    # Auto mode self-scales risk DOWN to stay within the mandatory Lev x Risk cap,
+    # instead of letting apply_hard_cap_guard block every entry once a winning
+    # account's recommended risk pushes the product over the cap. Manual mode
+    # still hits the guard so the user is told to lower their own inputs.
+    if auto_risk:
+        _cap = db.get_float("lev_risk_hard_cap_pct", 10.0)
+        if eff_lev > 0 and eff_lev * eff_risk > _cap:
+            eff_risk = max(0.1, _cap / eff_lev)
+
     # Hard cap guard (always active).
     ok, reason = risk_guard.apply_hard_cap_guard(eff_lev, eff_risk)
     if not ok:
         return {"blocked": reason}
 
     filters = bc.get_filters(symbol, api_mode)
-    entry = float(signal["entry"])
+
+    # Enter at the LIVE price, not the signal's candle-close. On higher timeframes
+    # that close can be HOURS old; opening there while the market has already moved
+    # made the position instant-close (0.0h) and re-fire every scan — a phantom
+    # spiral that "won" 250x on ETC / "lost" 11x on AAVE and faked a +$790 balance.
+    # Shift SL/TP by the same offset so the SL distance and R:R are preserved
+    # exactly and the trade can never instant-close.
+    sig_entry = float(signal["entry"])
     sl = float(signal["sl"])
+    tp1 = float(signal["tp1"]); tp2 = float(signal["tp2"]); tp3 = float(signal["tp3"])
+    sig_sl_dist = abs(sig_entry - sl)
+    try:
+        live = bc.get_price(symbol, api_mode)
+    except Exception:  # noqa: BLE001
+        live = 0.0
+    # No live price -> do NOT fall back to the stale candle close: that recreates
+    # the instant-close phantom the live-shift was written to kill. Skip instead.
+    if not live or live <= 0:
+        return {"blocked": "no live price for entry"}
+    # If the market has already moved more than one SL-distance away from the
+    # signal's candle close, the move happened without us — chasing a dead thesis.
+    # Skip rather than enter at an arbitrary shifted price.
+    if sig_sl_dist > 0 and abs(live - sig_entry) > sig_sl_dist:
+        return {"blocked": f"live moved >1R from signal ({sig_entry}->{live}), stale skip"}
+    off = live - sig_entry
+    entry = live
+    sl += off; tp1 += off; tp2 += off; tp3 += off
+
+    # Reject signals whose SL/TP1 landed on the WRONG side of entry — e.g. trend's
+    # ema50 SL when price is on the far side of ema50, or a breakout TP1 that sits
+    # below entry on a large break. The backtest's _valid() skips these; live must
+    # too, or they instant-close/-stop the moment they open.
+    _side = signal["signal"]
+    if _side == "BUY" and not (sl < entry < tp1):
+        return {"blocked": f"BUY sl/tp1 wrong side (sl={sl:.6g} e={entry:.6g} tp={tp1:.6g})"}
+    if _side == "SELL" and not (tp1 < entry < sl):
+        return {"blocked": f"SELL sl/tp1 wrong side (tp={tp1:.6g} e={entry:.6g} sl={sl:.6g})"}
+
     sl_distance = abs(entry - sl)
     if sl_distance <= 0:
         return {"blocked": "SL distance is zero"}
@@ -57,6 +102,11 @@ def _sizing(symbol, strategy, signal, equity, multiplier, api_mode):
         return {"blocked": f"qty {qty} < minQty {filters['minQty']}"}
     if qty > filters["maxQty"]:
         qty = filters["maxQty"]
+    # Binance rejects sub-minNotional orders (qty*price below ~$5). Block here so
+    # a real entry never silently fails (and a paper entry never simulates a fill
+    # a real account could not actually place).
+    if entry * qty < filters.get("minNotional", 5.0):
+        return {"blocked": f"notional {entry*qty:.2f} < min {filters.get('minNotional', 5.0)}"}
 
     return {
         "eff_lev": eff_lev,
@@ -64,9 +114,9 @@ def _sizing(symbol, strategy, signal, equity, multiplier, api_mode):
         "qty": qty,
         "entry": bc.round_price(entry, filters["tickSize"]),
         "sl": bc.round_price(sl, filters["tickSize"]),
-        "tp1": bc.round_price(float(signal["tp1"]), filters["tickSize"]),
-        "tp2": bc.round_price(float(signal["tp2"]), filters["tickSize"]),
-        "tp3": bc.round_price(float(signal["tp3"]), filters["tickSize"]),
+        "tp1": bc.round_price(tp1, filters["tickSize"]),
+        "tp2": bc.round_price(tp2, filters["tickSize"]),
+        "tp3": bc.round_price(tp3, filters["tickSize"]),
         "filters": filters,
     }
 
@@ -107,9 +157,24 @@ def _take_profit(client, symbol, close_side, stop_price, qty=None, close_all=Fal
     return client.futures_create_order(**params)
 
 
+def _num(x):
+    try:
+        return float(x or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+@with_retry(max_retries=2, base_delay=1)
+@rate_limited(weight=1)
+def _get_order(client, symbol, order_id):
+    """Read back a placed order to get its real fill (avgPrice / executedQty)."""
+    return client.futures_get_order(symbol=symbol, orderId=order_id)
+
+
 def execute_order(symbol, strategy, signal, *, equity, multiplier, api_mode,
                   paper_mode, funding_rate=0.0, open_interest=0.0, session="",
-                  lgbm_score=0.0, news_score=0.0, health=100.0, entry_features=None):
+                  lgbm_score=0.0, news_score=0.0, health=100.0, entry_features=None,
+                  strategy_name=""):
     """
     Place (or simulate) an order from a final signal. Returns the new
     active_positions row id, or None if blocked/failed.
@@ -128,10 +193,11 @@ def execute_order(symbol, strategy, signal, *, equity, multiplier, api_mode,
     fees_estimated = entry * qty * TAKER_FEE * 2  # round trip estimate
 
     # Partial TP only applies in Auto TP/SL mode; manual mode is a single target.
-    partial_tp = db.get_bool(f"{strategy}_partial_tp", True) and db.get_bool(f"{strategy}_auto_tpsl", True)
-    trail_auto = 1 if db.get_bool(f"{strategy}_trail_auto", False) else 0
+    partial_tp = db.get_bool(f"{strategy}_partial_tp", True) and db.auto_flag(f"{strategy}_auto_tpsl", True)
+    trail_auto = 1 if db.auto_flag(f"{strategy}_trail_auto", False) else 0
     tf = db.get_setting(f"{strategy}_timeframe", "5m")
     atr_at_entry = float(signal.get("atr", 0.0)) if signal.get("atr") else 0.0
+    _cfg_id, _cfg_desc = db.config_snapshot(strategy)
 
     position = {
         "symbol": symbol,
@@ -157,6 +223,16 @@ def execute_order(symbol, strategy, signal, *, equity, multiplier, api_mode,
         "funding_rate": funding_rate,
         "open_interest": open_interest,
         "session": session,
+        # Which strategy MODULE fired (Trend/Breakout/EmaStoch/...), as opposed to
+        # `strategy` which is only the slot name. Needed to attribute results.
+        "strategy_name": strategy_name or "",
+        # The settings this entry was taken under, so results stay attributable
+        # after any of them change (see db.config_snapshot).
+        "config_id": _cfg_id,
+        "config_desc": _cfg_desc,
+        "rr": (abs(sized["tp1"] - entry) / abs(entry - sized["sl"])
+               if entry != sized["sl"] else 0.0),
+        "risk_pct": sized["eff_risk"],
         "lgbm_score": lgbm_score,
         "news_score": news_score,
         "effective_leverage": sized["eff_lev"],
@@ -194,24 +270,53 @@ def execute_order(symbol, strategy, signal, *, equity, multiplier, api_mode,
 
     try:
         entry_order = _market_entry(client, symbol, side, qty)
-        db.update_position(pos_id, {"order_id": str(entry_order.get("orderId", ""))})
+        # Read the ACTUAL fill. A create-order ack can come back before the fill
+        # is reflected, so re-read the order once if avgPrice isn't populated, and
+        # size the SL off what ACTUALLY filled (executedQty), not the request.
+        _fill = _num(entry_order.get("avgPrice"))
+        _filled_qty = _num(entry_order.get("executedQty"))
+        if _fill <= 0 and entry_order.get("orderId"):
+            try:
+                _chk = _get_order(client, symbol, entry_order["orderId"])
+                _fill = _num(_chk.get("avgPrice")) or _fill
+                _filled_qty = _num(_chk.get("executedQty")) or _filled_qty
+            except Exception:  # noqa: BLE001
+                pass
+        if _filled_qty > 0:
+            qty = _filled_qty                       # authoritative filled size
+        _upd = {"order_id": str(entry_order.get("orderId", ""))}
+        if _fill > 0:
+            _upd["entry_price"] = _fill
+        if qty > 0:
+            _upd["entry_qty"] = qty
+            _upd["fees_estimated"] = (_fill or entry) * qty * TAKER_FEE * 2
+        db.update_position(pos_id, _upd)
 
-        _stop_market(client, symbol, close_side, sized["sl"])
+        # SL is MANDATORY. A filled entry with no resting stop is unbounded risk
+        # if the process dies before the software monitor can act. If the stop
+        # cannot be placed even after retries, FLATTEN the entry immediately
+        # instead of returning a naked position.
+        try:
+            _stop_market(client, symbol, close_side, sized["sl"])
+        except Exception as _sl_err:  # noqa: BLE001
+            db.log_event("SL_FAILED_FLATTEN",
+                         f"{symbol} {strategy}: stop placement failed ({_sl_err}) — flattening entry")
+            try:
+                market_close(symbol, side, qty, api_mode)
+            except Exception as _fe:  # noqa: BLE001
+                db.log_event("FLATTEN_FAILED",
+                             f"{symbol} {strategy}: could NOT flatten after SL failure ({_fe}) "
+                             "— NAKED POSITION, manual action needed on Binance")
+            db.update_position(pos_id, {"status": "closed"})
+            db.delete_position(pos_id)
+            return None
 
-        if partial_tp:
-            c1 = db.get_float(f"{strategy}_tp1_close_pct", 50) / 100.0
-            c2 = db.get_float(f"{strategy}_tp2_close_pct", 30) / 100.0
-            q1 = bc.truncate_qty(qty * c1, sized["filters"]["stepSize"])
-            q2 = bc.truncate_qty(qty * c2, sized["filters"]["stepSize"])
-            if q1 >= sized["filters"]["minQty"]:
-                _take_profit(client, symbol, close_side, sized["tp1"], qty=q1)
-            if q2 >= sized["filters"]["minQty"]:
-                _take_profit(client, symbol, close_side, sized["tp2"], qty=q2)
-            # Remaining quantity closes at TP3.
-            _take_profit(client, symbol, close_side, sized["tp3"], close_all=True)
-        else:
-            _take_profit(client, symbol, close_side, sized["tp1"], close_all=True)
-
+        # TP1/2/3 + trailing are managed by the SOFTWARE monitor only — we do NOT
+        # place resting TP orders on the exchange. Otherwise the exchange and the
+        # monitor both act on the same position: an exchange TP filling between
+        # scans caused double-closes and desynced/fabricated PnL. The exchange SL
+        # above stays as a dead-man's switch; process_position reconciles if it
+        # fills between scans.
         db.log_event("REAL_OPEN", f"{symbol} {side} qty={qty} @ {entry} pos_id={pos_id}")
         return pos_id
     except Exception as e:  # noqa: BLE001

@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 import database as db
 from utils import binance_client as bc
 from utils import indicators, news
-from strategies import trend, reversion, breakout, ai_hybrid
+from strategies import trend, reversion, breakout, ai_hybrid, emastoch
 from execution import risk_guard, orders, position_manager
 from notifications import telegram_bot as tg
 
@@ -34,10 +34,13 @@ _last_status = {"ts": 0.0}
 def _effective_tfs(strategy):
     """Return (entry, confirm, trend) timeframes. When Auto Timeframe is on the
     bot uses sensible presets so the user never has to tune them."""
-    if db.get_bool(f"{strategy}_auto_tf", True):
+    if db.auto_flag(f"{strategy}_auto_tf", True):
         if strategy == "scalping":
             return "5m", "15m", "1h"
-        return "4h", "1d", "3d"
+        # swing auto = the proven edge: breakout on the DAILY chart. (Was 4h,
+        # which the backtests showed LOSES; only 1d has an edge.) This makes
+        # Auto Timeframe safe to leave on for swing.
+        return "1d", "3d", "1w"
     return (db.get_setting(f"{strategy}_timeframe", "5m"),
             db.get_setting(f"{strategy}_confirm_tf", "15m"),
             db.get_setting(f"{strategy}_trend_tf", "1h"))
@@ -87,7 +90,7 @@ def aggregate_signal(symbol, strategy, df_entry, df_confirm, df_trend,
                                    ("Breakout", brk_res)]
             if res and res["signal"] != "NONE"
         )
-        if db.get_bool(f"{strategy}_auto_threshold", True):
+        if db.auto_flag(f"{strategy}_auto_threshold", True):
             ai_threshold = risk_guard.recommended_threshold(strategy)
         else:
             ai_threshold = db.get_float(f"{strategy}_ai_threshold", 0.75)
@@ -95,6 +98,7 @@ def aggregate_signal(symbol, strategy, df_entry, df_confirm, df_trend,
             df_entry, trend_res, rev_res, brk_res,
             funding_rate=funding_rate, oi_change_pct=oi_change,
             news_score=news_score, ai_threshold=ai_threshold,
+            use_model=db.get_bool("ai_model_on", True),
         )
         return final, (triggered or "AI"), float(final.get("lgbm_score", 0.0))
 
@@ -102,17 +106,21 @@ def aggregate_signal(symbol, strategy, df_entry, df_confirm, df_trend,
     trend_on = db.get_bool(f"{strategy}_trend_on", True)
     reversion_on = db.get_bool(f"{strategy}_reversion_on", True)
     breakout_on = db.get_bool(f"{strategy}_breakout_on", True)
+    # EMA-stack + Stochastic pullback (the user's own, walk-forward validated:
+    # 6h 1:3 PF 1.74 n=203, newest era strongest). Off unless explicitly enabled.
+    emastoch_on = db.get_bool(f"{strategy}_emastoch_on", False)
     trend_res = trend.run(df_entry, df_confirm, df_trend, mtf) if trend_on else None
     rev_res = reversion.run(df_entry, df_confirm, df_trend, mtf) if reversion_on else None
     brk_res = breakout.run(df_entry, df_confirm, df_trend, mtf) if breakout_on else None
+    ems_res = emastoch.run(df_entry, df_confirm, df_trend, mtf) if emastoch_on else None
 
-    enabled = [s for s in (trend_res, rev_res, brk_res) if s is not None]
+    enabled = [s for s in (trend_res, rev_res, brk_res, ems_res) if s is not None]
     if not enabled:
         return {"signal": "NONE"}, "", 0.0
 
     triggered = "+".join(
         name for name, res in [("Trend", trend_res), ("Reversion", rev_res),
-                               ("Breakout", brk_res)]
+                               ("Breakout", brk_res), ("EmaStoch", ems_res)]
         if res and res["signal"] != "NONE"
     )
     non_none = [s for s in enabled if s["signal"] != "NONE"]
@@ -155,11 +163,68 @@ def _engine_mode(strategy):
     return "real" if db.get_setting(f"{strategy}_mode", "paper") == "real" else "paper"
 
 
+def _warn_config_drift():
+    """Say so, loudly, if a slot is no longer running the config it was set to.
+
+    Months were lost to settings that quietly overrode the intended setup with
+    nothing to show it: the bot looked like it was running one thing while
+    trading another. apply_best.py records the config id it wrote; this
+    compares it against what is live every cycle and reports the first
+    divergence to the event log and Telegram.
+
+    It warns, it does not block. Every trade already carries its own config id,
+    so a drifted setting splits the record instead of corrupting it -- and a
+    guard that stops trading on its own judgement is the failure that cost this
+    bot months in the first place.
+    """
+    for slot in ("swing", "scalping"):
+        locked = db.get_setting(f"locked_config_{slot}", "")
+        if not locked:
+            continue
+        cid, desc = db.config_snapshot(slot)
+        if cid == locked:
+            continue
+        if db.get_setting(f"drift_warned_{slot}", "") == cid:
+            continue        # already reported this one; do not spam every cycle
+        db.save_setting(f"drift_warned_{slot}", cid)
+        msg = f"{slot} config changed: {locked} -> {cid} ({desc})"
+        db.log_event("CONFIG_DRIFT", msg)
+        try:
+            tg.send_message(f"⚠️ {msg}\nTrades from now on are recorded under {cid}.")
+        except Exception:  # noqa: BLE001  (a failed notify must not stop the loop)
+            pass
+
+
+def _winrate_floor(strategy, slack=0.8):
+    """Win rate below which a context is a chronic loser, given the slot's R:R.
+
+    The adaptive filters used a flat 35-40%, which silently assumes a system
+    that wins more often than it loses. At 1:3 break-even is 25%, so the chosen
+    trend 12h 1:3 -- designed to win 35% -- sits under a flat floor while being
+    profitable, and each pair would have been switched off as it reached the
+    trade count. Break-even is 100/(1+rr); only a context clearly below that is
+    worth skipping.
+    """
+    rr = db.get_float(f"{strategy}_fixed_rr", 0.0) or 3.0
+    return (100.0 / (1.0 + rr)) * slack
+
+
 def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_mode):
     # Skip if we already hold a position for this symbol+strategy.
     for p in db.get_open_positions(strategy=strategy):
         if p["symbol"] == symbol:
             return
+
+    # Both slots now run on 12h, so Swing (trend) and Scalping (emastoch) can
+    # fire on the same symbol in the same direction and silently double the
+    # risk on that coin. Stop the second slot stacking onto a symbol the other
+    # one already holds. Logged so why_stuck.py shows it if it ever bites.
+    if db.get_bool("cross_slot_symbol_guard", True):
+        for p in db.get_open_positions():
+            if p["symbol"] == symbol and p["strategy"] != strategy:
+                db.log_event("CROSS_SLOT_BLOCK",
+                             f"{symbol} {strategy}: already held by {p['strategy']}")
+                return
 
     # Post-SL cooldown: after a stop loss the entry candle's signal is unchanged,
     # so re-entering immediately just repeats the same losing trade (this caused
@@ -218,22 +283,25 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
                   if not paper_mode else db.get_float("starting_balance", equity) or equity)
     guards = [
         risk_guard.apply_health_guard(equity, _start_bal, strategy)[:2],
-        risk_guard.apply_daily_loss_guard(equity),
+        risk_guard.apply_daily_loss_guard(equity, paper_mode),
         risk_guard.apply_blackout_guard(),
         risk_guard.apply_correlation_guard(signal["signal"], strategy),
         risk_guard.apply_session_filter(strategy),
-        risk_guard.apply_concurrency_guard(),
+        risk_guard.apply_concurrency_guard(equity),
     ]
     for ok, reason in guards:
         if not ok:
             db.log_event("GUARD_BLOCK", f"{symbol} {strategy}: {reason}")
             return
 
-    # Swing: require high LGBM confidence — only enter on strong, confirmed setups.
-    # Scalping watches every tick; swing waits for the right moment.
+    # Swing: optional LGBM-confidence gate. Default 0.0 (disabled): live paper
+    # results showed the direction model was anti-predictive — high-confidence
+    # entries (lgbm>=0.70) won ~38% while model-free entries won ~61% — so gating
+    # swing on it actively hurt. Kept as a tunable (getset swing_min_lgbm) so the
+    # gate can be re-enabled if a retrained model later proves predictive.
     if strategy == "swing":
-        _min_lgbm = db.get_float("swing_min_lgbm", 0.65)
-        if lgbm_score < _min_lgbm:
+        _min_lgbm = db.get_float("swing_min_lgbm", 0.0)
+        if _min_lgbm > 0 and lgbm_score < _min_lgbm:
             db.log_event("SWING_LGBM_SKIP",
                          f"{symbol} lgbm={lgbm_score:.2f} < {_min_lgbm:.2f}")
             return
@@ -243,7 +311,7 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
 
     # Manual TP/SL override: when Auto TP/SL is off, use the single TP%/SL%
     # sliders (one target) instead of the strategy's structure/ATR levels.
-    if not db.get_bool(f"{strategy}_auto_tpsl", True):
+    if not db.auto_flag(f"{strategy}_auto_tpsl", True):
         entry = float(signal["entry"])
         tp_pct = db.get_float(f"{strategy}_tp_pct", 1.5)
         sl_pct = db.get_float(f"{strategy}_sl_pct", 0.8)
@@ -256,10 +324,44 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
         signal["tp1"] = signal["tp2"] = signal["tp3"] = tp
 
     # -----------------------------------------------------------------------
+    # ATR-based stop loss (Auto TP/SL mode). The strategies set a structural SL
+    # (e.g. trend uses EMA50), which can sit far from entry in a strong trend
+    # (oversized losses) or too tight in chop (whipsaw stop-outs). Replacing it
+    # with SL = entry ∓ atr_sl_mult × ATR keeps the risk distance proportional
+    # to current volatility. TP levels are left to the strategy, so the R:R
+    # filter below still governs whether the resulting trade is worth taking.
+    # Tunable via atr_sl_enabled / atr_sl_mult (Settings or getset).
+    # -----------------------------------------------------------------------
+    if db.auto_flag(f"{strategy}_auto_tpsl", True) and db.get_bool("atr_sl_enabled", True):
+        _atr = float(signal.get("atr") or 0.0)
+        _entry = float(signal["entry"])
+        if _atr > 0 and _entry > 0:
+            _mult = db.get_float("atr_sl_mult", 1.5)
+            if signal["signal"] == "BUY":
+                signal["sl"] = _entry - _mult * _atr
+            else:
+                signal["sl"] = _entry + _mult * _atr
+
+    # -----------------------------------------------------------------------
+    # Fixed R:R (walk-forward validated). Override TP1 to a clean fixed R:R off
+    # the FINAL sl, for whichever strategy fired. The swing sweep + walk-forward
+    # showed breakout-1d and trend-6h/12h only clear the edge bar (and stay
+    # robust across eras) at a forced 1:3 R:R — their native TPs are smaller /
+    # era-dependent. Realise it here instead of each strategy's own TP. Active
+    # only when {strategy}_fixed_rr > 0 (0 = keep the strategy's native TP).
+    # -----------------------------------------------------------------------
+    _frr = db.get_float(f"{strategy}_fixed_rr", 0.0)
+    if _frr > 0 and signal.get("signal") in ("BUY", "SELL"):
+        _e = float(signal["entry"]); _sl = float(signal["sl"])
+        _d = 1 if signal["signal"] == "BUY" else -1
+        signal["tp1"] = _e + _d * _frr * abs(_e - _sl)
+
+    # -----------------------------------------------------------------------
     # Risk:Reward filter — skip entries where potential loss > potential gain.
     # Trades with inverted R:R drag down PnL even at 50%+ win rates.
     # -----------------------------------------------------------------------
-    _min_rr = db.get_float("min_rr_ratio", 1.5)
+    _min_rr = (risk_guard.recommended_min_rr(strategy) if risk_guard.global_auto_on()
+               else db.get_float("min_rr_ratio", 2.0))
     try:
         _sl_dist = abs(float(signal["entry"]) - float(signal["sl"]))
         _tp_dist = abs(float(signal["tp1"]) - float(signal["entry"]))
@@ -272,26 +374,64 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
         pass
 
     # -----------------------------------------------------------------------
+    # Minimum TP distance floor — skip micro-targets that fees would eat.
+    # In low-volatility conditions an ATR/structure TP can sit only a few
+    # hundredths of a percent from entry; after round-trip taker fees (~0.08%)
+    # plus slippage the realised "win" is near zero (seen as +0.01-0.06 closes).
+    # Requiring TP1 to be at least `min_tp_pct` away keeps wins meaningfully
+    # larger than costs. Applies in both Auto and Manual TP/SL modes.
+    # -----------------------------------------------------------------------
+    _min_tp_pct = 0.4 if risk_guard.global_auto_on() else db.get_float("min_tp_pct", 0.4)
+    try:
+        _entry = float(signal["entry"])
+        _tp_pct_dist = abs(float(signal["tp1"]) - _entry) / max(_entry, 1e-9) * 100.0
+        if _tp_pct_dist < _min_tp_pct:
+            db.log_event("TP_FLOOR_SKIP",
+                         f"{symbol} {strategy} TP={_tp_pct_dist:.2f}% < {_min_tp_pct}%")
+            db.log_signal(symbol, triggered or strategy, lgbm_score, news_score, "TP_FLOOR_SKIP")
+            return
+    except Exception:  # noqa: BLE001
+        pass
+
+    # -----------------------------------------------------------------------
     # Adaptive self-learning entry filters
     # The bot learns from its own closed-trade history (real trades only).
     # Each filter only activates once there are enough trades in that context
     # to be statistically meaningful — before then it stays out of the way.
     # -----------------------------------------------------------------------
 
+    # Which trade history the self-learning filters read. When learn_from_paper
+    # is on (default) we include paper trades too — otherwise, while paper
+    # trading, these filters and the win model see zero history and never learn.
+    _lpm = None if db.get_bool("learn_from_paper", True) else 0
+
+    # Master switch. These filters block entries on their own judgement, and a
+    # blocking rule that turns out to be wrong is expensive to notice — the
+    # correlation cap once starved this bot of every entry for months. One
+    # setting kills all four; every block is logged, so why_stuck.py shows them.
+    _adaptive = db.get_bool("adaptive_filters_on", True)
+
+    # Floor below which a context counts as a chronic loser. A fixed 35-40%
+    # assumes a system that wins more often than it loses. trend 12h at 1:3 is
+    # designed to win 35% — break-even is 25% — so a fixed floor would block
+    # exactly the pairs the strategy is working on, one by one, as each reached
+    # 15 trades. Derive it from the slot's R:R instead.
+    _floor = _winrate_floor(strategy)
+
     # 1. Pair win rate (all directions): if this pair has been a chronic loser
-    #    across 15+ real trades, skip until the pattern improves.
-    wr_pair, n_pair = db.winrate(strategy, symbol, paper_mode=0)
-    if n_pair >= 15 and wr_pair is not None and wr_pair < 40.0:
+    #    across 15+ trades, skip until the pattern improves.
+    wr_pair, n_pair = db.winrate(strategy, symbol, paper_mode=_lpm)
+    if _adaptive and n_pair >= 15 and wr_pair is not None and wr_pair < _floor:
         db.log_event("WINRATE_SKIP", f"{symbol} {strategy} pair_wr={wr_pair:.0f}% over {n_pair} trades")
         db.log_signal(symbol, triggered or strategy, lgbm_score, news_score, "LOWWR_SKIP")
         return
 
     # 2. Direction-specific win rate: if e.g. SELL on SOLUSDT has lost 10/10
     #    times, stop entering that direction on this pair until history improves.
-    if db.get_bool(f"{strategy}_dir_filter", True):
+    if _adaptive and db.auto_flag(f"{strategy}_dir_filter", True):
         wr_dir, n_dir = db.winrate(strategy, symbol,
-                                   side=signal["signal"], paper_mode=0)
-        if n_dir >= 10 and wr_dir is not None and wr_dir < 35.0:
+                                   side=signal["signal"], paper_mode=_lpm)
+        if n_dir >= 10 and wr_dir is not None and wr_dir < _floor:
             db.log_event("DIRWR_SKIP",
                          f"{symbol} {strategy} {signal['signal']} dir_wr={wr_dir:.0f}% over {n_dir} trades")
             db.log_signal(symbol, triggered or strategy, lgbm_score, news_score, "DIRWR_SKIP")
@@ -299,10 +439,10 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
 
     # 3. Hour-of-day win rate: if this UTC hour has historically lost across
     #    10+ real trades for this strategy, wait for a better hour.
-    if db.get_bool(f"{strategy}_hour_filter", True):
+    if _adaptive and db.auto_flag(f"{strategy}_hour_filter", True):
         cur_hour = datetime.now(timezone.utc).hour
-        wr_hour, n_hour = db.winrate_hour(cur_hour, strategy=strategy)
-        if n_hour >= 10 and wr_hour is not None and wr_hour < 35.0:
+        wr_hour, n_hour = db.winrate_hour(cur_hour, strategy=strategy, paper_mode=_lpm)
+        if n_hour >= 10 and wr_hour is not None and wr_hour < _floor:
             db.log_event("HOURWR_SKIP",
                          f"{symbol} {strategy} UTC_hour={cur_hour} hour_wr={wr_hour:.0f}% over {n_hour} trades")
             db.log_signal(symbol, triggered or strategy, lgbm_score, news_score, "HOURWR_SKIP")
@@ -310,10 +450,10 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
 
     # 4. Session × pair win rate: e.g. ETHUSDT is consistently losing during
     #    the Asian session — skip that combination specifically.
-    if db.get_bool(f"{strategy}_session_pair_filter", True):
+    if _adaptive and db.auto_flag(f"{strategy}_session_pair_filter", True):
         cur_session = _current_session()
-        wr_sess, n_sess = db.winrate_session_pair(cur_session, symbol, strategy=strategy)
-        if n_sess >= 8 and wr_sess is not None and wr_sess < 35.0:
+        wr_sess, n_sess = db.winrate_session_pair(cur_session, symbol, strategy=strategy, paper_mode=_lpm)
+        if n_sess >= 8 and wr_sess is not None and wr_sess < _floor:
             db.log_event("SESSWR_SKIP",
                          f"{symbol} {strategy} session={cur_session} sess_wr={wr_sess:.0f}% over {n_sess} trades")
             db.log_signal(symbol, triggered or strategy, lgbm_score, news_score, "SESSWR_SKIP")
@@ -331,7 +471,7 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
     from models.train import get_win_model
     wm = get_win_model()
     _win_samples = db.get_int("win_model_samples", 0)
-    if wm is not None and _win_samples >= 50 and db.get_bool(f"{strategy}_win_filter", True):
+    if wm is not None and _win_samples >= 50 and db.auto_flag(f"{strategy}_win_filter", True):
         try:
             win_prob = float(wm.predict_proba([entry_features])[0][1])
             min_wp = db.get_float("win_filter_min", 0.45)
@@ -349,7 +489,7 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
         equity=equity, multiplier=multiplier, api_mode=api_mode,
         paper_mode=paper_mode, funding_rate=funding_rate, open_interest=oi_change,
         session=session, lgbm_score=lgbm_score, news_score=news_score, health=health,
-        entry_features=entry_features,
+        entry_features=entry_features, strategy_name=(triggered or ""),
     )
     if pos_id:
         pos = db.get_position(pos_id)
@@ -406,7 +546,15 @@ def _maybe_status():
 
 
 def _enforce_health(equity):
-    starting = db.get_float("starting_balance", equity)
+    # In real mode `equity` is the live wallet, so it must be measured against the
+    # REAL starting balance — not the paper baseline (which would force-stop a
+    # healthy real account and cancel its live stops, or mask a real drawdown).
+    any_real = (db.get_setting("swing_mode", "paper") == "real" or
+                db.get_setting("scalping_mode", "paper") == "real")
+    if any_real:
+        starting = db.get_float("real_starting_balance", 0.0) or equity
+    else:
+        starting = db.get_float("starting_balance", equity)
     health = risk_guard.health_ratio(equity, starting)
     if health < 25:
         if db.get_bool("scalping_bot_on") or db.get_bool("swing_bot_on"):
@@ -425,7 +573,9 @@ def _enforce_health(equity):
 
 def _selected_pairs():
     raw = db.get_setting("selected_pairs", "")
-    return [p.strip() for p in raw.split(",") if p.strip()][:10]
+    # cap at 40 (breakout-1d trades a broad ~38-pair universe; the dashboard
+    # enforces the same max). Was [:10] then [:20].
+    return [p.strip() for p in raw.split(",") if p.strip()][:40]
 
 
 # ---------------------------------------------------------------------------
@@ -461,15 +611,23 @@ def _run_cycle():
         _update_snapshot(db.get_float("last_equity", 0.0), equity_mode, _selected_pairs())
         return
 
-    try:
-        real_equity = bc.get_equity(equity_mode)
-        db.save_setting("binance_conn", "1")
-        db.save_setting("binance_conn_msg", f"Connected ({equity_mode})")
-    except Exception as e:  # noqa: BLE001
-        db.log_event("EQUITY_ERROR", str(e))
-        db.save_setting("binance_conn", "0")
-        db.save_setting("binance_conn_msg", f"Not connected: {e}")
+    if not bc.has_credentials(equity_mode):
+        # Paper with no API keys: balance is simulated. Don't call the private
+        # equity endpoint (it needs a secret) — that only spammed EQUITY_ERROR
+        # every cycle. Public klines still work, so trading is unaffected.
         real_equity = db.get_float("starting_balance", 0.0)
+        db.save_setting("binance_conn", "1")
+        db.save_setting("binance_conn_msg", "Paper — simulated balance (no keys)")
+    else:
+        try:
+            real_equity = bc.get_equity(equity_mode)
+            db.save_setting("binance_conn", "1")
+            db.save_setting("binance_conn_msg", f"Connected ({equity_mode})")
+        except Exception as e:  # noqa: BLE001
+            db.log_event("EQUITY_ERROR", str(e))
+            db.save_setting("binance_conn", "0")
+            db.save_setting("binance_conn_msg", f"Not connected: {e}")
+            real_equity = db.get_float("starting_balance", 0.0)
 
     # Seed the starting capital once from the real wallet.
     if db.get_float("starting_balance", 0.0) <= 0 and real_equity > 0:
@@ -484,14 +642,21 @@ def _run_cycle():
     health = _enforce_health(primary_equity)
     multiplier = risk_guard.health_multiplier(health)
 
+    _warn_config_drift()
+
     if multiplier > 0:
         pairs = _selected_pairs()
         for strategy in ("scalping", "swing"):
             if not db.get_bool(f"{strategy}_bot_on", False):
                 continue
-            # Per-engine mode: paper -> testnet data + simulated; real -> live.
             paper_mode = _engine_mode(strategy) == "paper"
-            api_mode = "test" if paper_mode else "real"
+            # Market DATA is ALWAYS mainnet — klines/price/funding are PUBLIC (no
+            # key needed), so paper analyses the REAL market and matches the
+            # backtests (testnet candles diverge from mainnet and miss many pairs).
+            # paper_mode ALONE gates real-vs-simulated ORDERS (orders.execute_order
+            # branches on paper_mode, not api_mode), so this never places a real
+            # trade in paper mode.
+            api_mode = "real"
             eng_equity = paper_eq if paper_mode else real_equity
             for symbol in pairs:
                 try:
@@ -535,7 +700,7 @@ def _update_snapshot(equity, equity_mode, pairs):
         prices = {}
         for s in syms:
             try:
-                prices[s] = bc.get_price(s, equity_mode)
+                prices[s] = bc.get_price(s, "real")   # public mainnet price
             except Exception:  # noqa: BLE001
                 pass
         db.save_setting("live_prices", json.dumps(prices))

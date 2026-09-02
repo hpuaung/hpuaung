@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+"""strategy_backtest.py — backtest the bot's FOUR strategies SEPARATELY so we can
+see which (if any) has an edge on its own: Trend Following, Mean Reversion,
+Breakout, and AI Hybrid. Runs each strategy's real run() over historical candles
+and exits at that strategy's OWN sl / tp1 (as it is designed), then reports
+win% / avg win-R / avg loss-R / expectancy / profit factor per strategy.
+
+Usage:
+  .venv/bin/python strategy_backtest.py [pairs] [interval] [candles]
+  .venv/bin/python strategy_backtest.py all 1h 1500
+  .venv/bin/python strategy_backtest.py all 4h 1500
+"""
+import sys
+import warnings
+warnings.filterwarnings("ignore")
+
+import database as db
+from utils import binance_client as bc
+from utils import indicators as ind
+from strategies import trend, reversion, breakout, ai_hybrid
+
+db.init_db()
+_a = sys.argv[1:]
+pairs_arg = _a[0] if len(_a) > 0 else "all"
+# interval can be a comma list to sweep timeframes, e.g. 5m,15m,30m,1h,4h,1d
+INTERVALS = [x.strip() for x in (_a[1] if len(_a) > 1 else "1h").split(",") if x.strip()]
+LIMIT = int(_a[2]) if len(_a) > 2 else 1500
+DETAIL = "detail" in _a          # per-pair breakdown
+ONLY = None                      # restrict to one strategy, e.g. only=breakout
+RR = None                        # override exit to a fixed R:R, e.g. rr=2 or rr=3
+for _x in _a:
+    if _x.startswith("only="):
+        ONLY = _x.split("=", 1)[1]
+    if _x.startswith("rr="):
+        RR = float(_x.split("=", 1)[1])
+
+if pairs_arg == "all":
+    PAIRS = [p.strip() for p in db.get_setting(
+        "selected_pairs", "BTCUSDT,ETHUSDT,SOLUSDT").split(",") if p.strip()]
+else:
+    PAIRS = [p.strip().upper() for p in pairs_arg.split(",") if p.strip()]
+
+FEE = 0.0004
+SLIP = 0.0005
+WARMUP = 210
+MAXHOLD = 200
+STRATS = ["trend", "reversion", "breakout", "hybrid"]
+
+
+def _valid(res):
+    if not res or res.get("signal", "NONE") not in ("BUY", "SELL"):
+        return None
+    e, sl, tp = float(res.get("entry", 0)), float(res.get("sl", 0)), float(res.get("tp1", 0))
+    if e <= 0 or sl <= 0 or tp <= 0 or abs(e - sl) <= 0:
+        return None
+    # sanity: sl/tp on correct sides
+    if res["signal"] == "BUY" and not (sl < e < tp):
+        return None
+    if res["signal"] == "SELL" and not (tp < e < sl):
+        return None
+    return res
+
+
+def run_pair(df):
+    hi = df["high"].astype(float).tolist()
+    lo = df["low"].astype(float).tolist()
+    c = df["close"].astype(float).tolist()
+    n = len(c)
+    active = [ONLY] if ONLY else STRATS
+    # hybrid needs all three base signals; otherwise compute only what's active
+    need_tr = ("trend" in active) or ("hybrid" in active)
+    need_rv = ("reversion" in active) or ("hybrid" in active)
+    need_bk = ("breakout" in active) or ("hybrid" in active)
+    pos = {s: None for s in active}
+    trades = {s: [] for s in active}
+    for i in range(WARMUP, n):
+        sub = df.iloc[:i + 1]
+        if not ind.has_enough(sub):
+            continue
+        tr = trend.run(sub, mtf=False) if need_tr else None
+        rv = reversion.run(sub, mtf=False) if need_rv else None
+        bk = breakout.run(sub, mtf=False) if need_bk else None
+        hy = (ai_hybrid.run(sub, tr, rv, bk, ai_threshold=0.60, use_model=False)
+              if "hybrid" in active else None)
+        sigs = {"trend": tr, "reversion": rv, "breakout": bk, "hybrid": hy}
+        for s in active:
+            p = pos[s]
+            if p:
+                d = p["d"]; ex = None
+                if d > 0:
+                    if lo[i] <= p["sl"]:
+                        ex = p["sl"] * (1 - SLIP)
+                    elif hi[i] >= p["tp"]:
+                        ex = p["tp"]
+                else:
+                    if hi[i] >= p["sl"]:
+                        ex = p["sl"] * (1 + SLIP)
+                    elif lo[i] <= p["tp"]:
+                        ex = p["tp"]
+                if ex is None and i - p["i"] >= MAXHOLD:
+                    ex = c[i]
+                if ex is not None:
+                    gross = (ex - p["entry"]) * d
+                    fee = (p["entry"] + ex) * FEE
+                    trades[s].append((gross - fee) / p["risk"])
+                    pos[s] = None
+            if not pos[s]:
+                r = _valid(sigs[s])
+                if r:
+                    e = float(r["entry"]); sl = float(r["sl"]); tp = float(r["tp1"])
+                    d = 1 if r["signal"] == "BUY" else -1
+                    # rr= overrides the native TP with a clean fixed R:R (keeps
+                    # the SL) to test whether a better R:R rescues the entry.
+                    if RR is not None:
+                        tp = e + d * RR * abs(e - sl)
+                    pos[s] = {"i": i, "d": d, "entry": e, "sl": sl, "tp": tp,
+                              "risk": abs(e - sl)}
+    return trades
+
+
+def _line(label, t):
+    if not t:
+        print(f"{label:12}{'0':>6}   no trades")
+        return
+    w = [x for x in t if x > 0]
+    aw = sum(w) / len(w) if w else 0
+    al = sum(x for x in t if x <= 0) / max(len(t) - len(w), 1)
+    gW = sum(w); gL = -sum(x for x in t if x <= 0)
+    pf = gW / gL if gL > 0 else float("inf")
+    edge = " 🟢" if (sum(t) / len(t) > 0 and pf > 1.3) else ""
+    print(f"{label:12}{len(t):>6}{100*len(w)//len(t):>6}{aw:>+9.2f}{al:>+10.2f}"
+          f"{sum(t)/len(t):>+8.3f}{pf:>7.2f}{edge}")
+
+
+def run_interval(interval):
+    strats = [ONLY] if ONLY else STRATS
+    agg = {s: [] for s in strats}
+    per_pair = {s: {} for s in strats}
+    got = 0
+    for sym in PAIRS:
+        try:
+            df = bc.get_ohlcv_deep(sym, interval, LIMIT, api_mode="real")
+            if df is None or len(df) < WARMUP + 30:
+                continue
+            got = max(got, len(df))
+            df = ind.compute_indicators(df)
+            t = run_pair(df)
+            for s in strats:
+                agg[s] += t[s]
+                per_pair[s][sym] = t[s]
+        except Exception:  # noqa: BLE001
+            continue
+    print(f"\n==== interval={interval}  candles/pair≈{got} (asked {LIMIT}) ====")
+    print(f"{'strategy':12}{'n':>6}{'win%':>6}{'avgWinR':>9}{'avgLossR':>10}{'expR':>8}{'PF':>7}")
+    for s in strats:
+        _line(s, agg[s])
+        if DETAIL:
+            for sym in PAIRS:
+                if per_pair[s].get(sym):
+                    _line("  " + sym, per_pair[s][sym])
+
+
+print("=" * 70)
+print(f"STRATEGY BACKTEST (each strategy alone)  timeframes={','.join(INTERVALS)}")
+if RR is not None:
+    print(f"exit = FIXED R:R 1:{RR:g} (native SL kept, TP overridden).  model OFF.")
+else:
+    print("exits use each strategy's own SL / TP1.  model OFF in hybrid.")
+print("=" * 70)
+for _iv in INTERVALS:
+    run_interval(_iv)
+print("-" * 70)
+print("🟢 = expectancy > 0 AND PF > 1.3 (real edge).  Look for it across timeframes.")

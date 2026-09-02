@@ -21,15 +21,32 @@ from execution import orders, risk_guard
 TAKER_FEE = 0.0004
 
 # Entry-timeframe -> minutes, used to size the post-SL re-entry cooldown.
+# NOTE: every timeframe an engine can run MUST be here. A missing key fell back
+# to the 15-minute default, so a 12h swing trade re-entered every 15 min inside
+# the same (unchanged) candle — one pair stopped out 11x in a row (-$9). 8h/12h
+# were the gaps.
 _TF_MINUTES = {"1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30, "1h": 60,
-               "2h": 120, "4h": 240, "6h": 360, "1d": 1440, "3d": 4320, "1w": 10080}
+               "2h": 120, "4h": 240, "6h": 360, "8h": 480, "12h": 720,
+               "1d": 1440, "3d": 4320, "1w": 10080}
+
+
+def _tf_to_minutes(tf):
+    """Entry candle length in minutes. Falls back to PARSING the string (e.g.
+    '12h' -> 720) instead of a fixed 15 so a timeframe missing from the table can
+    never again shrink the cooldown to 15 min and cause re-entry spirals."""
+    if tf in _TF_MINUTES:
+        return _TF_MINUTES[tf]
+    try:
+        return int(tf[:-1]) * {"m": 1, "h": 60, "d": 1440, "w": 10080}[tf[-1]]
+    except Exception:  # noqa: BLE001
+        return 15
 
 
 def _set_sl_cooldown(pos):
     """After a stop loss, block re-entry on this symbol+strategy for roughly one
     entry candle so the unchanged signal does not immediately re-fire."""
     tf = pos.get("timeframe", "5m")
-    mins = max(_TF_MINUTES.get(tf, 15), 15)  # 15-minute floor for fast scalps
+    mins = max(_tf_to_minutes(tf), 15)  # 15-minute floor for fast scalps
     until = datetime.now(timezone.utc) + timedelta(minutes=mins)
     db.save_setting(f"cooldown_{pos['strategy']}_{pos['symbol']}",
                     until.strftime("%Y-%m-%d %H:%M:%S"))
@@ -106,7 +123,21 @@ def _record_close(pos, qty, exit_price, reason, notifier=None):
         "fees_paid": fees,
         "net_pnl": net,
         "close_reason": reason,
-        "paper_mode": pos.get("paper_mode", 0),
+        # Planned risk levels, so the realised R-multiple can be measured after
+        # the fact (|exit-entry| / |entry-sl|) — the forward test's core check.
+        "sl_price": pos.get("sl_price"),
+        "tp1_price": pos.get("tp1"),
+        "strategy_name": pos.get("strategy_name") or "",
+        "timeframe": pos.get("timeframe") or "",
+        # Carried from the position so the closed trade still knows which
+        # settings produced it, whatever the settings are by the time it closes.
+        "config_id": pos.get("config_id") or "",
+        "config_desc": pos.get("config_desc") or "",
+        "rr": pos.get("rr"),
+        "risk_pct": pos.get("risk_pct"),
+        # default 1 (paper), not 0 — a missing flag must not mislabel a paper
+        # trade as real (that also made clear_paper_trades miss them).
+        "paper_mode": pos.get("paper_mode", 1),
         "status": "closed",
         "hold_duration": hold_str,
         "lgbm_score": pos.get("lgbm_score"),
@@ -117,13 +148,15 @@ def _record_close(pos, qty, exit_price, reason, notifier=None):
     }
     db.insert_trade(trade)
     risk_guard.update_streak(net)
-    # Start a re-entry cooldown after a stop loss to stop the same losing signal
-    # from re-firing on the same (unchanged) entry candle.
-    if reason == "SL":
-        try:
-            _set_sl_cooldown(pos)
-        except Exception:  # noqa: BLE001
-            pass
+    # Re-entry cooldown after EVERY close — one entry candle, win OR loss.
+    # Exempting winners let a WINNING phantom re-fire every scan: ETC re-entered
+    # ~250x in a night, compounding a fake +$790. A genuine trend is still
+    # re-enterable on the NEXT candle, which is all a swing/scalp needs; nothing
+    # legitimate needs to re-open the same pair 48 seconds after closing.
+    try:
+        _set_sl_cooldown(pos)
+    except Exception:  # noqa: BLE001
+        pass
     # Self-learning: pair the entry features with the win/loss outcome.
     feats = pos.get("entry_features")
     if feats:
@@ -141,23 +174,45 @@ def _record_close(pos, qty, exit_price, reason, notifier=None):
 
 
 def _real_close(pos, qty, api_mode):
-    """Cancel remaining protective orders and market-close `qty` (real mode)."""
+    """Market-close `qty` (real). Returns True on success OR when the position is
+    already flat on the exchange (its resting SL/TP filled first — reconcile, do
+    NOT retry forever); False only on a genuinely transient error."""
     try:
         orders.market_close(pos["symbol"], pos["side"], qty, api_mode)
+        return True
     except Exception as e:  # noqa: BLE001
+        msg = str(e).lower()
+        if any(k in msg for k in ("-2022", "reduceonly", "-4046", "-2011",
+                                  "no position", "position side")):
+            db.log_event("CLOSE_RECONCILE", f"{pos['symbol']} already flat: {e}")
+            return True
         db.log_event("CLOSE_ERROR", f"{pos['symbol']}: {e}")
+        return False
 
 
 def _close_full(pos, exit_price, reason, api_mode, notifier=None):
     """Close the remaining fraction and remove the active position."""
-    qty = round(float(pos["entry_qty"]) * _remaining_fraction(pos), 8)
+    qty = float(pos["entry_qty"]) * _remaining_fraction(pos)
     if not pos.get("paper_mode"):
+        # Truncate to the symbol's LOT_SIZE step — a round()'d fraction is almost
+        # never a valid multiple, so Binance would reject the close.
+        try:
+            qty = bc.truncate_qty(qty, bc.get_filters(pos["symbol"], api_mode)["stepSize"])
+        except Exception:  # noqa: BLE001
+            qty = round(qty, 8)
+        # Close FIRST; only cancel the protective SL/TP and drop the position row
+        # if the close actually SUCCEEDED. Cancelling the stops before a close
+        # that then fails would leave a NAKED real position with unbounded risk.
+        if qty > 0 and not _real_close(pos, qty, api_mode):
+            db.log_event("CLOSE_FAILED",
+                         f"{pos['symbol']} real close failed — position + stops kept, retry next scan")
+            return
         try:
             orders.cancel_all_orders(pos["symbol"], api_mode)
         except Exception:  # noqa: BLE001
             pass
-        if qty > 0:
-            _real_close(pos, qty, api_mode)
+    else:
+        qty = round(qty, 8)
     if qty > 0:
         _record_close(pos, qty, exit_price, reason, notifier)
     db.update_position(pos["id"], {"status": "closed"})
@@ -165,19 +220,43 @@ def _close_full(pos, exit_price, reason, api_mode, notifier=None):
 
 
 def _close_partial(pos, tp_level, exit_price, close_pct, api_mode, notifier=None):
-    qty = round(float(pos["entry_qty"]) * (close_pct / 100.0), 8)
+    qty = float(pos["entry_qty"]) * (close_pct / 100.0)
+    if not pos.get("paper_mode"):
+        try:
+            qty = bc.truncate_qty(qty, bc.get_filters(pos["symbol"], api_mode)["stepSize"])
+        except Exception:  # noqa: BLE001
+            qty = round(qty, 8)
+    else:
+        qty = round(qty, 8)
     if qty <= 0:
         return
     if not pos.get("paper_mode"):
-        _real_close(pos, qty, api_mode)
+        # Cancel resting orders first so the exchange TP for this level cannot ALSO
+        # fill (double close); close the fraction; then re-arm the SL for the
+        # remainder (cancel_all removed it) so it is never left unprotected.
+        try:
+            orders.cancel_all_orders(pos["symbol"], api_mode)
+        except Exception:  # noqa: BLE001
+            pass
+        if not _real_close(pos, qty, api_mode):
+            db.log_event("PARTIAL_CLOSE_FAILED", f"{pos['symbol']} TP{tp_level} — retry next scan")
+            return
+        try:
+            close_side = "SELL" if pos["side"] == "BUY" else "BUY"
+            orders._stop_market(bc.get_client(api_mode), pos["symbol"], close_side, pos["sl_price"])
+        except Exception:  # noqa: BLE001
+            pass
     _record_close(pos, qty, exit_price, f"TP{tp_level}", notifier)
 
 
 def process_position(pos, notifier=None):
     """Evaluate a single open position against the live price."""
     strat = pos["strategy"]
-    # A position keeps the data source it was opened with (paper -> testnet).
-    api_mode = "test" if pos.get("paper_mode") else "real"
+    # Monitoring price is ALWAYS mainnet (public) so paper exits track the SAME
+    # real market as paper entries. Paper positions still close in the DB only —
+    # _close_full/_close_partial gate the real order on paper_mode — so this never
+    # sends a real close for a paper position.
+    api_mode = "real"
     side = pos["side"]
     d = _dir(side)
 
@@ -187,9 +266,27 @@ def process_position(pos, notifier=None):
         db.log_event("PRICE_ERROR", f"{pos['symbol']}: {e}")
         return
 
+    # REAL positions carry a resting exchange SL (dead-man's switch) that can fill
+    # between scans. Reconcile against the actual exchange position FIRST: if the
+    # exchange is already flat, that stop filled — book the close at the SL (best
+    # estimate) instead of leaving a ghost the monitor keeps managing or later
+    # booking a fabricated software win. Paper positions have no exchange side.
+    if not pos.get("paper_mode"):
+        try:
+            amt = bc.get_position_amt(pos["symbol"], api_mode)
+        except Exception:  # noqa: BLE001
+            amt = None
+        if amt is not None and abs(amt) < float(pos["entry_qty"] or 0.0) * 0.01:
+            qty_left = float(pos["entry_qty"]) * _remaining_fraction(pos)
+            if qty_left > 0:
+                _record_close(pos, qty_left, float(pos["sl_price"]), "Reconciled-SL", notifier)
+            db.update_position(pos["id"], {"status": "closed"})
+            db.delete_position(pos["id"])
+            return
+
     entry = float(pos["entry_price"])
     partial = db.get_bool(f"{strat}_partial_tp", True)
-    auto_be = db.get_bool(f"{strat}_auto_be", True)
+    auto_be = db.auto_flag(f"{strat}_auto_be", True)
 
     # --- Partial take profits ---
     if partial:
@@ -242,7 +339,7 @@ def process_position(pos, notifier=None):
     if pos.get("trailing_active"):
         # Auto TP/SL mode → trailing distance adapts to volatility (ATR at
         # entry); manual mode → use the user's distance slider.
-        if db.get_bool(f"{strat}_auto_tpsl", True):
+        if db.auto_flag(f"{strat}_auto_tpsl", True):
             atr = float(pos.get("atr_at_entry") or 0.0)
             trail_pct = max(0.3, atr / entry * 100.0) if (atr > 0 and entry > 0) \
                 else db.get_float(f"{strat}_trail_pct", 1.5)
@@ -277,7 +374,7 @@ def process_position(pos, notifier=None):
 
     # --- Max hold days (swing only) ---
     if strat == "swing":
-        max_days = 7 if db.get_bool("swing_auto_maxhold", True) else db.get_int("swing_max_hold_days", 7)
+        max_days = 7 if db.auto_flag("swing_auto_maxhold", True) else db.get_int("swing_max_hold_days", 7)
         hours, _ = _hold_duration(pos)
         if hours >= max_days * 24:
             _close_full(pos, price, "MaxDays", api_mode, notifier)

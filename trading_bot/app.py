@@ -11,6 +11,7 @@ thread — so a Streamlit rerun never restarts or disturbs trading.
 import io
 import csv
 import json
+import os
 from datetime import datetime, timezone
 
 import streamlit as st
@@ -68,7 +69,11 @@ st.markdown(
 
 db.init_db()
 
-if "engine_started" not in st.session_state:
+# Run the engine + background services inside the dashboard process ONLY when an
+# external engine process is not handling them. Set ENGINE_EXTERNAL=1 in the
+# dashboard's systemd unit when running run_engine.py as a separate service, so
+# the UI stays responsive (the engine no longer competes with it for the GIL).
+if os.environ.get("ENGINE_EXTERNAL") != "1" and "engine_started" not in st.session_state:
     st.session_state["engine_started"] = True
     vps_optimizer.start_vps_monitor()
     lgbm.ensure_model_on_start()
@@ -79,43 +84,126 @@ if "engine_started" not in st.session_state:
 
 # ---------------------------------------------------------------------------
 # Auto-saving widget helpers
+#
+# Normally each widget saves immediately on change (one rerun per change). On a
+# small VPS, where the dashboard shares a process with the trading engine, that
+# makes the UI feel like it is constantly "running/connecting". Wrapping a group
+# of widgets in `with settings_form(...)` batches them: nothing reruns until the
+# Apply button is pressed, so you can adjust everything first, then apply once.
 # ---------------------------------------------------------------------------
+from contextlib import contextmanager
+
+_FORM = None  # active settings_form field collector, or None for live-save mode
+
+
+def _reg(key, kind):
+    if _FORM is not None:
+        _FORM.append((key, kind))
+
+
+@contextmanager
+def settings_form(name, label="💾 Apply changes"):
+    """Group widgets so they only save + rerun once, on the Apply button."""
+    global _FORM
+    with st.form(name):
+        _FORM = []
+        try:
+            yield
+        finally:
+            fields, _FORM = _FORM, None
+        if st.form_submit_button(label):
+            for key, kind in fields:
+                ss = f"w_{key}"
+                new = st.session_state.get(ss)
+                # Persist ONLY fields the user actually changed since page load.
+                # Saving the whole pinned snapshot (the old behaviour) clobbered
+                # any key another writer (engine / deploy / CLI getset / a second
+                # tab) changed meanwhile, and on a fresh DB wrote the DEFAULTS back
+                # over real values — the "settings reset on revisit" bug.
+                if str(new) != str(st.session_state.get(f"orig_{ss}")):
+                    db.save_setting(key, ("1" if new else "0") if kind == "bool" else new)
+                    st.session_state[f"orig_{ss}"] = new   # new baseline
+            st.success("✅ Saved")
+            st.rerun()
+
+
+def _remember_orig(ss_key, value):
+    # For FORM widgets only: stash the page-load DB value so the form's Apply can
+    # tell which fields the user actually edited (dirty check) and leave the rest
+    # alone. Live widgets don't need it (they save on change).
+    if _FORM is not None:
+        st.session_state[f"orig_{ss_key}"] = value
+
+
 def _init(ss_key, value):
     if ss_key not in st.session_state:
         st.session_state[ss_key] = value
+        _remember_orig(ss_key, value)
+
+
+def _sync(ss_key, value):
+    # Live (non-form) widgets re-read the DB every render, so an external write
+    # (Swing Plan apply, another device, AUTO) shows here instead of a stale
+    # session value that would be saved back and REVERT the change. Form widgets
+    # keep once-only init so in-progress edits survive until submit.
+    if _FORM is None or ss_key not in st.session_state:
+        st.session_state[ss_key] = value
+        _remember_orig(ss_key, value)
 
 
 def bool_toggle(label, key, default=False):
     ss = f"w_{key}"
-    _init(ss, db.get_bool(key, default))
-    st.toggle(label, key=ss,
-              on_change=lambda: db.save_setting(key, "1" if st.session_state[ss] else "0"))
+    _sync(ss, db.get_bool(key, default))
+    if _FORM is None:
+        st.toggle(label, key=ss,
+                  on_change=lambda: db.save_setting(key, "1" if st.session_state[ss] else "0"))
+    else:
+        st.toggle(label, key=ss)
+        _reg(key, "bool")
     return st.session_state[ss]
 
 
 def slider(label, key, lo, hi, step, default, is_int=False):
     ss = f"w_{key}"
     cur = db.get_int(key, int(default)) if is_int else db.get_float(key, float(default))
-    _init(ss, cur)
-    st.slider(label, lo, hi, key=ss, step=step,
-              on_change=lambda: db.save_setting(key, st.session_state[ss]))
+    _sync(ss, cur)
+    if _FORM is None:
+        st.slider(label, lo, hi, key=ss, step=step,
+                  on_change=lambda: db.save_setting(key, st.session_state[ss]))
+    else:
+        st.slider(label, lo, hi, key=ss, step=step)
+        _reg(key, "num")
     return st.session_state[ss]
 
 
 def number(label, key, default, is_int=False):
     ss = f"w_{key}"
     cur = db.get_int(key, int(default)) if is_int else db.get_float(key, float(default))
-    _init(ss, cur)
-    st.number_input(label, key=ss,
-                    on_change=lambda: db.save_setting(key, st.session_state[ss]))
+    _sync(ss, cur)
+    if _FORM is None:
+        st.number_input(label, key=ss,
+                        on_change=lambda: db.save_setting(key, st.session_state[ss]))
+    else:
+        st.number_input(label, key=ss)
+        _reg(key, "num")
     return st.session_state[ss]
 
 
 def text(label, key, password=False, default="", show_saved=False):
     ss = f"w_{key}"
     _init(ss, db.get_setting(key, default))
-    st.text_input(label, key=ss, type="password" if password else "default",
-                  on_change=lambda: db.save_setting(key, st.session_state[ss]))
+    if _FORM is None:
+        # NEVER persist a blank over a saved secret. text() holds API keys /
+        # Telegram token / chat id / admin password; on mobile, tapping a
+        # pre-filled box to retype briefly empties it, and an unguarded on_change
+        # would write "" straight over the stored key (the "Telegram keeps
+        # needing re-entry" bug). The `and` short-circuits on empty so nothing is
+        # saved — clearing a field intentionally just leaves the stored value.
+        st.text_input(label, key=ss, type="password" if password else "default",
+                      on_change=lambda: st.session_state[ss] and db.save_setting(key, st.session_state[ss]))
+    else:
+        st.text_input(label, key=ss, type="password" if password else "default")
+        _reg(key, "text")
     if show_saved:
         cur = db.get_setting(key, "")
         if cur:
@@ -128,9 +216,13 @@ def text(label, key, password=False, default="", show_saved=False):
 def select(label, key, options, default):
     ss = f"w_{key}"
     cur = db.get_setting(key, default)
-    _init(ss, cur if cur in options else default)
-    st.selectbox(label, options, key=ss,
-                 on_change=lambda: db.save_setting(key, st.session_state[ss]))
+    _sync(ss, cur if cur in options else default)
+    if _FORM is None:
+        st.selectbox(label, options, key=ss,
+                     on_change=lambda: db.save_setting(key, st.session_state[ss]))
+    else:
+        st.selectbox(label, options, key=ss)
+        _reg(key, "text")
     return st.session_state[ss]
 
 
@@ -183,6 +275,24 @@ def live_equity(api_mode=None):
 
 def live_price(symbol, api_mode=None):
     return float(_snapshot_prices().get(symbol, 0.0) or 0.0)
+
+
+def paper_unrealized():
+    """Live (floating) P&L of all OPEN paper positions, marked to the engine's
+    price snapshot. This is what makes EQUITY move while trades are still open —
+    the realized Paper Balance only changes when a trade CLOSES."""
+    total = 0.0
+    for p in db.get_open_positions():
+        if db.get_setting(f"{p.get('strategy', '')}_mode", "paper") == "real":
+            continue  # real positions don't affect the paper wallet
+        px = live_price(p.get("symbol"))
+        entry = float(p.get("entry_price") or 0.0)
+        qty = float(p.get("entry_qty") or 0.0)
+        if px <= 0 or entry <= 0 or qty <= 0:
+            continue
+        d = 1.0 if p.get("side") == "BUY" else -1.0
+        total += (px - entry) * qty * d
+    return total
 
 
 def _conn_badge(mode):
@@ -288,15 +398,28 @@ def tab_dashboard():
         scalp_lbl = "⚡ Scalp=REAL" if scalp_real else "⚡ Scalp=Paper"
         swing_lbl = "📈 Swing=REAL" if swing_real else "📈 Swing=Paper"
         st.caption(f"Mixed mode: {scalp_lbl} | {swing_lbl} — Health based on Real balance")
-    else:
+    elif any_real:
         b1, b2 = st.columns(2)
-        if any_real:
-            b1.metric("💰 Real Balance", f"${primary_bal:,.2f}",
-                      f"{primary_bal - starting:+,.2f} vs start")
-        else:
-            b1.metric("📒 Paper Balance", f"${paper_bal:,.2f}",
-                      f"{paper_bal - starting:+,.2f} all-time")
+        b1.metric("💰 Real Balance", f"${primary_bal:,.2f}",
+                  f"{primary_bal - starting:+,.2f} vs start")
         b2.metric("Today PnL", f"${pnl:,.2f}", f"{pnl_pct:+.2f}%")
+    else:
+        # Paper: Balance is realized-only (moves on CLOSE); Equity = Balance +
+        # open positions' live floating P&L (moves in real time as prices tick).
+        unrl = paper_unrealized()
+        equity = paper_bal + unrl
+        b1, b2 = st.columns(2)
+        b1.metric("📒 Paper Balance", f"${paper_bal:,.2f}",
+                  f"{paper_bal - starting:+,.2f} all-time")
+        b2.metric("💵 Equity (live)", f"${equity:,.2f}",
+                  f"{unrl:+,.2f} open P&L")
+        b3, b4 = st.columns(2)
+        b3.metric("📈 Open P&L", f"${unrl:+,.2f}", "unrealized", delta_color="off")
+        b4.metric("Today PnL", f"${pnl:,.2f}", f"{pnl_pct:+.2f}%")
+        st.caption("**Balance** = realized cash — moves only when a trade CLOSES. "
+                   "**Open P&L** = live floating profit/loss of open positions. "
+                   "**Equity = Balance + Open P&L** — this is the number that moves "
+                   "in real time while positions are open.")
 
     # Real wallet balances are shown ONLY when the matching API keys exist.
     wallet = []
@@ -324,39 +447,42 @@ def tab_dashboard():
     st.caption("Each engine runs its own mode — e.g. Swing on Paper while Scalp is Real. "
                "Change it in the ⚡ Scalping / 📈 Swing tab.")
 
-    # Section 3 — Pair Selection (checkbox list + explicit Save)
-    st.subheader("🎯 Pair Selection (Max 10)")
-    all_pairs = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT",
-                 "DOGEUSDT", "LINKUSDT", "AVAXUSDT", "MATICUSDT", "DOTUSDT",
-                 "LTCUSDT", "TRXUSDT", "ATOMUSDT"]
-    selected = [p.strip() for p in db.get_setting("selected_pairs", "").split(",") if p.strip()]
-    grid = st.columns(2)
-    checked = {}
-    for i, p in enumerate(all_pairs):
-        checked[p] = grid[i % 2].checkbox(p, value=(p in selected), key=f"pairchk_{p}")
-    new_sel = [p for p in all_pairs if checked[p]]
-    st.caption(f"Ticked {len(new_sel)}/10")
-    if st.button("💾 Save Pairs", type="primary"):
-        if len(new_sel) > 10:
-            st.error("⚠️ Max 10 pairs — untick some.")
-        elif not new_sel:
-            st.error("Pick at least 1 pair.")
-        else:
-            db.save_setting("selected_pairs", ",".join(new_sel))
-            tg.send_message("🎯 <b>Pairs updated</b>\n" + ", ".join(new_sel))
-            st.success(f"Saved {len(new_sel)} pairs ✅ (Telegram notified)")
-            st.rerun()
+    # Section 3 — Pair Selection (collapsed; click to expand)
+    with st.expander("🎯 Pair Selection (breakout-1d broad universe)", expanded=False):
+        _pair_selection()
 
     # Section 4 — Engine Status
     st.subheader("⚙️ Engine Status")
-    model = lgbm.get_model()
+    # Only load the model (imports the heavy lightgbm lib) when the AI model is
+    # enabled; it's OFF by config, so skip it to keep the dashboard light.
+    ai_on = db.get_bool("ai_model_on", False)
+    model = lgbm.get_model() if ai_on else None
     sc = st.columns(2)
     sc[0].write(f"⚡ Scalping: {'🟢 Running' if db.get_bool('scalping_bot_on') else '🟡 Stopped'} "
                 f"[{db.get_setting('scalping_mode','paper').upper()}]")
     sc[0].write(f"📈 Swing: {'🟢 Running' if db.get_bool('swing_bot_on') else '🟡 Stopped'} "
                 f"[{db.get_setting('swing_mode','paper').upper()}]")
-    sc[1].write(f"🤖 LightGBM: {'🟢 Active' if model else '🔴 Not Trained'}")
+    sc[1].write(f"🤖 LightGBM: {'🟢 Active' if model else ('🔴 Not Trained' if ai_on else '⚪ Off')}")
     sc[1].write(f"📰 Sentiment: {'🟢 Connected' if db.get_setting('hf_token') else '🔴 Error'}")
+
+    # Section 4b — Quick Controls (engine restart + emergency close, right here on
+    # the Dashboard so they're one tap away, not buried in Settings).
+    st.subheader("🛑 Quick Controls")
+    qc = st.columns(2)
+    if qc[0].button("🔄 Restart Engine", key="dash_restart", use_container_width=True,
+                    help="Restart the trading engine so pulled code / new settings take effect."):
+        ok, msg = _restart_engine()
+        (st.success if ok else st.error)(msg)
+    if qc[1].button("🚨 EMERGENCY CLOSE ALL", key="dash_emerg", type="primary",
+                    use_container_width=True,
+                    help="Stop BOTH engines and market-close EVERY open position now."):
+        n = _emergency_close_all()
+        st.warning(f"🚨 Emergency: both engines stopped, {n} position(s) closed, orders cancelled. "
+                   "Use '🔄 Restart All Engines' (Settings) to resume trading.")
+        st.rerun()
+    st.caption("**Restart Engine** = load new code/config after an update (dashboard stays up). "
+               "**Emergency Close All** = halt both engines and close every open position at "
+               "market immediately — the bail-out button.")
 
     # Section 5 — Live Positions
     st.subheader("📍 Live Positions")
@@ -378,29 +504,95 @@ def tab_dashboard():
 
     # Section 7 — Performance Metrics
     st.subheader("📈 Performance Metrics")
-    _trade_filter = st.radio("Show trades:", ["Real only", "Paper only", "All"],
+    _trade_filter = st.radio("Show trades:", ["Paper only", "Real only", "All"],
                              horizontal=True, index=0, key="rank_filter")
     _pm_filter = (False if _trade_filter == "Real only"
                   else True if _trade_filter == "Paper only" else None)
     _performance_metrics(_pm_filter)
 
-    # AI learning progress toward the adaptive thresholds.
-    st.subheader("🧠 AI Learning Progress")
-    _learning_progress()
+    # Sections 8-11 — collapsed by default; click to expand each.
+    with st.expander("🏆 Pair Ranking", expanded=False):
+        _pair_ranking(_pm_filter)
 
-    # Section 8 — Pair Performance Ranking
-    st.subheader("🏆 Pair Ranking")
-    _pair_ranking(_pm_filter)
+    with st.expander("🕐 Best Trading Hours (UTC)", expanded=False):
+        _best_hours(_pm_filter)
 
-    # Section 9 — Best Trading Hours
-    st.subheader("🕐 Best Trading Hours (UTC)")
-    _best_hours(_pm_filter)
+    with st.expander("📅 Trade History (by date)", expanded=False):
+        _history_calendar()
 
-    # Section 10 — Export
-    st.subheader("📥 Export")
-    csv_bytes = _trades_csv(_pm_filter)
-    st.download_button("📥 Download Trade Report CSV", csv_bytes,
-                       file_name="trade_report.csv", mime="text/csv")
+    with st.expander("📥 Export", expanded=False):
+        csv_bytes = _trades_csv(_pm_filter)
+        st.download_button("📥 Download Trade Report CSV", csv_bytes,
+                           file_name="trade_report.csv", mime="text/csv")
+
+
+def _pair_selection():
+    """Checkbox grid + Save for the traded pair universe (shown in an expander)."""
+    all_pairs = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
+                 "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "LTCUSDT",
+                 "DOTUSDT", "TRXUSDT", "ATOMUSDT", "UNIUSDT", "ETCUSDT",
+                 "XLMUSDT", "BCHUSDT", "NEARUSDT", "APTUSDT", "ARBUSDT",
+                 "OPUSDT", "FILUSDT", "INJUSDT", "SUIUSDT", "AAVEUSDT",
+                 "ALGOUSDT", "ICPUSDT", "VETUSDT", "HBARUSDT", "GRTUSDT",
+                 "SANDUSDT", "MANAUSDT", "AXSUSDT", "EOSUSDT", "THETAUSDT",
+                 "XTZUSDT", "CRVUSDT", "DYDXUSDT"]
+    selected = [p.strip() for p in db.get_setting("selected_pairs", "").split(",") if p.strip()]
+    grid = st.columns(2)
+    checked = {}
+    for i, p in enumerate(all_pairs):
+        checked[p] = grid[i % 2].checkbox(p, value=(p in selected), key=f"pairchk_{p}")
+    new_sel = [p for p in all_pairs if checked[p]]
+    st.caption(f"Ticked {len(new_sel)}/38")
+    if st.button("💾 Save Pairs", type="primary"):
+        if len(new_sel) > 40:
+            st.error("⚠️ Max 40 pairs — untick some.")
+        elif not new_sel:
+            st.error("Pick at least 1 pair.")
+        else:
+            db.save_setting("selected_pairs", ",".join(new_sel))
+            tg.send_message("🎯 <b>Pairs updated</b>\n" + ", ".join(new_sel))
+            st.success(f"Saved {len(new_sel)} pairs ✅ (Telegram notified)")
+            st.rerun()
+
+
+def _history_calendar():
+    """Calendar-style history: a per-day P&L rollup plus a date picker that shows
+    that day's closed trades. Today's numbers live in the per-engine 'Today Stats'
+    which auto-resets at 00:00 UTC; this is the archive of past days."""
+    daily = db.get_daily_pnl(30)
+    if not daily:
+        st.caption("No closed trades yet — history fills in as trades close.")
+        return
+    # per-day rollup table (newest first)
+    rollup = [{
+        "Date": d["d"],
+        "Trades": d["n"],
+        "Win%": f"{(100*d['wins']//d['n']) if d['n'] else 0}%",
+        "Net PnL": f"${d['net']:+.2f}",
+    } for d in daily]
+    st.caption("Daily P&L (last 30 trading days) — each day is a fresh tally.")
+    st.dataframe(rollup, use_container_width=True, hide_index=True)
+
+    # date picker -> that day's trades
+    dates = [d["d"] for d in daily]
+    pick = st.selectbox("📆 View a specific day's trades", dates, index=0, key="hist_date")
+    day_trades = db.get_trades_on_date(pick)
+    if not day_trades:
+        st.caption("No trades on that day.")
+        return
+    net = sum(float(t.get("net_pnl") or 0) for t in day_trades)
+    wins = sum(1 for t in day_trades if float(t.get("net_pnl") or 0) > 0)
+    st.write(f"**{pick}** — {len(day_trades)} trades · {100*wins//len(day_trades)}% win "
+             f"· Net **${net:+.2f}**")
+    rows = [{
+        "Pair": t.get("symbol"),
+        "Engine": t.get("strategy"),
+        "Side": t.get("side"),
+        "Net": f"${float(t.get('net_pnl') or 0):+.2f}",
+        "Reason": t.get("close_reason"),
+        "Closed": (t.get("exit_timestamp") or "")[11:19],
+    } for t in day_trades]
+    st.dataframe(rows, use_container_width=True, hide_index=True)
 
 
 def _learning_progress():
@@ -546,62 +738,89 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
     st.caption("Test Trade opens a small PAPER position now so you can watch the "
                "full lifecycle (entry → TP/SL/trail → close). For verification only.")
 
-    # Section 2 — Timeframe
+    # Section 2/3 — Timeframe & Strategy
     st.divider()
-    st.subheader("⏱️ Timeframe")
-    auto_tf = bool_toggle("🤖 Auto Timeframe (bot decides)", f"{strategy}_auto_tf", True)
-    if auto_tf:
-        preset = "Entry 5m · Confirm 15m · Trend 1h" if strategy == "scalping" \
-                 else "Entry 4h · Confirm 1d · Trend 3d"
-        st.caption(f"Bot auto → {preset}")
+    if swing:
+        # Swing strategy + timeframe are owned by the 📈 Swing Plan selector on
+        # the Settings tab. Show them READ-ONLY here so the two surfaces can never
+        # disagree — the old manual Breakout toggle + 1h/4h/1d buttons here fought
+        # the plan (which uses trend-12h / trend-6h) and reverted it.
+        import swing_plans
+        st.subheader("⏱️ Timeframe & Strategy")
+        ap = swing_plans.active_swing_plan()
+        tf_now = db.get_setting("swing_timeframe", "1d")
+        strat_now = ("Trend" if db.get_bool("swing_trend_on")
+                     else "Breakout" if db.get_bool("swing_breakout_on") else "—")
+        planlbl = (f"Swing Plan {ap} — {swing_plans.PLAN_NAMES[ap]}" if ap
+                   else "custom (not matching a validated plan)")
+        st.success(f"📈 **{strat_now} · {tf_now} · R:R 1:3**")
+        st.caption(f"Running **{planlbl}**. Strategy & timeframe are set by the "
+                   "**📈 Swing Plan** selector on the ⚙️ Settings tab — change them "
+                   "there, not here, so the two never disagree.")
     else:
-        tf_buttons("Entry TF", f"{strategy}_timeframe", entry_opts, db.get_setting(f"{strategy}_timeframe"))
-        tf_buttons("Confirm TF", f"{strategy}_confirm_tf", confirm_opts, db.get_setting(f"{strategy}_confirm_tf"))
-        tf_buttons("Trend TF", f"{strategy}_trend_tf", trend_opts, db.get_setting(f"{strategy}_trend_tf"))
-    bool_toggle("MTF Filter", f"{strategy}_mtf_filter", True)
-
-    # Section 3 — Strategy Mix
-    st.divider()
-    st.subheader("🧩 Strategy Mix")
-    hybrid_on = bool_toggle("🤖 AI Hybrid (uses all 3 strategies automatically)", f"{strategy}_hybrid_on", True)
-    if hybrid_on:
-        auto_thr = bool_toggle("🤖 Auto AI Threshold", f"{strategy}_auto_threshold", True)
-        if auto_thr:
-            rt = risk_guard.recommended_threshold(strategy)
-            wr, n = db.winrate(strategy)
-            hist = f"win rate {wr:.0f}%/{n} trades" if (n and wr is not None) else "still learning"
-            st.caption(f"🤖 Auto threshold **{rt:.2f}** ({hist}). Lower = more trades when winning, "
-                       f"higher = pickier when losing.")
+        st.subheader("⏱️ Timeframe")
+        auto_tf = bool_toggle("🤖 Auto Timeframe (bot decides)", f"{strategy}_auto_tf", True)
+        mtf_on = db.get_bool(f"{strategy}_mtf_filter", True)
+        if auto_tf:
+            st.caption("Bot auto → Entry 5m · Confirm 15m · Trend 1h")
         else:
-            slider("AI Threshold (lower = more trades)", f"{strategy}_ai_threshold", 0.50, 0.95, 0.01,
-                   db.get_float(f"{strategy}_ai_threshold", 0.75))
-        st.caption("🤖 AI Hybrid auto-runs Trend + Mean Reversion + Breakout and picks the best "
-                   "setup. No need to toggle them individually.")
-    else:
-        st.caption("Manual mode — pick which strategies trade (majority vote). "
-                   "Turn ON just one to test/learn a single strategy.")
-        bool_toggle("📈 Trend Following", f"{strategy}_trend_on", True)
-        bool_toggle("🔄 Mean Reversion", f"{strategy}_reversion_on", True)
-        bool_toggle("🚀 Breakout", f"{strategy}_breakout_on", True)
-    st.markdown("---")
-    news_on = bool_toggle("📰 News Filter", f"{strategy}_news_on", False)
-    if news_on:
-        slider("GNews Weight", f"{strategy}_gnews_weight", 0.1, 0.5, 0.05,
-               db.get_float(f"{strategy}_gnews_weight", 0.3))
-        slider("HF Min Score", f"{strategy}_hf_min_score", 0.50, 0.95, 0.01,
-               db.get_float(f"{strategy}_hf_min_score", 0.60))
-        st.caption(f"Cache: 30min (auto) | Today: {news.gnews_requests_today()}/100 requests")
-        st.caption(f"Last sentiment: {db.get_setting('last_sentiment_result', '—')}")
+            tf_buttons("Entry TF", f"{strategy}_timeframe", entry_opts, db.get_setting(f"{strategy}_timeframe"))
+            # Confirm/Trend TF only matter when the MTF filter is on — hide otherwise.
+            if mtf_on:
+                tf_buttons("Confirm TF", f"{strategy}_confirm_tf", confirm_opts, db.get_setting(f"{strategy}_confirm_tf"))
+                tf_buttons("Trend TF", f"{strategy}_trend_tf", trend_opts, db.get_setting(f"{strategy}_trend_tf"))
+        bool_toggle("MTF Filter", f"{strategy}_mtf_filter", True)
 
-    # Section 4 — Market Context
-    st.divider()
-    st.subheader("📡 Market Context")
-    funding_on = bool_toggle("Use Funding/OI in Signal", f"{strategy}_funding_filter", False)
-    if funding_on:
-        slider("Funding/OI Weight", f"{strategy}_funding_weight", 0.10, 0.30, 0.05,
-               db.get_float(f"{strategy}_funding_weight", 0.20))
-    _market_context_display(strategy)
-
+        st.divider()
+        st.subheader("🧩 Strategy")
+        # Manual strategy picker for the scalping slot — pick ONE, applied on the
+        # next scan. Inside a form so the choice can't be snapped back by a rerun.
+        # Trend / Breakout are the walk-forward-robust edges (best on 6h); Reversion
+        # is the RSI<20 scalper (decays across eras — paper-watch only).
+        _opts = ["Trend", "Breakout", "Reversion", "EMA+Stoch (yours)"]
+        _cur = ("EMA+Stoch (yours)" if db.get_bool(f"{strategy}_emastoch_on")
+                else "Trend" if db.get_bool(f"{strategy}_trend_on")
+                else "Breakout" if db.get_bool(f"{strategy}_breakout_on")
+                else "Reversion" if db.get_bool(f"{strategy}_reversion_on") else "Trend")
+        with st.form(f"{strategy}_strategy_form"):
+            _pick = st.radio("Scalping engine strategy (pick one)", _opts,
+                             index=_opts.index(_cur) if _cur in _opts else 0)
+            _frr = st.slider("R:R (TP = R × SL) — 3 = validated 1:3", 0.0, 4.0,
+                             value=float(db.get_float(f"{strategy}_fixed_rr", 0.0)
+                                         or db.get_float("reversion_fixed_rr", 3.0) or 3.0),
+                             step=0.5)
+            _applied = st.form_submit_button("✅ Apply Scalping Strategy", type="primary")
+        if _applied:
+            db.save_setting(f"{strategy}_trend_on", "1" if _pick == "Trend" else "0")
+            db.save_setting(f"{strategy}_breakout_on", "1" if _pick == "Breakout" else "0")
+            db.save_setting(f"{strategy}_reversion_on", "1" if _pick == "Reversion" else "0")
+            db.save_setting(f"{strategy}_emastoch_on",
+                            "1" if _pick == "EMA+Stoch (yours)" else "0")
+            db.save_setting(f"{strategy}_hybrid_on", "0")
+            # R:R routing: reversion sets its own TP via reversion_fixed_rr, so
+            # scalping_fixed_rr must be 0 then (avoids double-override); trend/
+            # breakout use the engine's {strategy}_fixed_rr override instead.
+            if _pick == "Reversion":
+                db.save_setting("reversion_fixed_rr", str(_frr))
+                db.save_setting(f"{strategy}_fixed_rr", "0")
+            else:
+                db.save_setting(f"{strategy}_fixed_rr", str(_frr))
+                db.save_setting("reversion_fixed_rr", "0")
+            st.success(f"✅ Scalping → {_pick} · R:R 1:{_frr:g}. Live on the next scan "
+                       "(set the Timeframe above — e.g. 6h for the robust trend edge).")
+            st.rerun()
+        st.caption(f"Now running: **{_cur}** on **{db.get_setting(f'{strategy}_timeframe','?')}**. "
+                   "Trend/Breakout = robust edges (use 6h). Reversion = RSI<20 scalper "
+                   "(decays — watch on paper).")
+        # Reversion-only tuning, shown when Reversion is the active pick.
+        if db.get_bool(f"{strategy}_reversion_on"):
+            st.markdown("**🔄 Reversion tuning** (backtest: RSI<20 = best, but era-decays)")
+            ext = slider("RSI extreme gate — 0 = off · lower = stricter/fewer/better",
+                         "reversion_rsi_extreme", 0, 40, 1,
+                         db.get_int("reversion_rsi_extreme", 0), is_int=True)
+            if ext > 0:
+                st.caption(f"🎯 Only fires when RSI ≤ {ext} (buy) / ≥ {100-ext} (sell). "
+                           f"20 = edge (PF~1.3, fewer) · 25 = more trades (PF~1.1) · 0 = all.")
     # Section 5 — Risk Management
     st.divider()
     st.subheader("🛡️ Risk Management")
@@ -644,10 +863,14 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
     # Section 6 — Take Profit / Stop Loss
     st.divider()
     st.subheader("🎯 Take Profit / Stop Loss")
-    auto_tpsl = bool_toggle("🤖 Auto TP/SL (ATR-based)", f"{strategy}_auto_tpsl", True)
+    auto_tpsl = bool_toggle("🤖 Auto TP/SL", f"{strategy}_auto_tpsl", True)
     if auto_tpsl:
-        st.caption("🤖 Auto sets TP1/TP2/TP3 & SL from market volatility (ATR), "
-                   "with partial closes at 50/30/20%.")
+        _atr = db.get_bool("atr_sl_enabled", False)
+        _part = db.get_bool(f"{strategy}_partial_tp", False)
+        _sl_src = "ATR volatility" if _atr else "the strategy's structural SL"
+        _tp_src = ("partial closes at 50/30/20%" if _part
+                   else "one full close at the fixed R:R 1:3 target")
+        st.caption(f"🤖 Auto → SL from {_sl_src}; TP via {_tp_src}.")
     else:
         rec_sl = 0.8 if strategy == "scalping" else 2.5
         rec_tp = rec_sl * 2
@@ -661,16 +884,6 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
         if rr < 1.5:
             st.warning(f"⚠️ R:R 1:{rr:.2f} is low — set TP ≥ {sl_pct*1.5:.1f}% to reach 1:1.5")
         st.caption(f"After 0.08% fee → Net TP {net_tp:.2f}% / Net SL {net_sl:.2f}% | R:R 1:{rr:.2f}")
-    bool_toggle("Auto Break-Even on TP1", f"{strategy}_auto_be", True)
-
-    # Trailing stop — distance is auto (ATR) when Auto TP/SL is on, manual slider otherwise.
-    trail_on = bool_toggle("📉 Trailing SL", f"{strategy}_trail_auto", False)
-    if trail_on:
-        if auto_tpsl:
-            st.caption("🤖 Auto trailing distance (adapts to ATR / volatility).")
-        else:
-            slider("Trailing distance %", f"{strategy}_trail_pct", 0.2, 5.0, 0.1,
-                   db.get_float(f"{strategy}_trail_pct", 1.5 if strategy == "swing" else 0.5))
 
     # Swing extras — Max Hold Days (force-close a swing trade after N days)
     if swing:
@@ -680,24 +893,28 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
                        "stays open forever).")
         else:
             slider("Max Hold Days", "swing_max_hold_days", 1, 30, 1,
-                   db.get_int("swing_max_hold_days", 7), is_int=True)
+                   db.get_int("swing_max_hold_days", 30), is_int=True)
 
-    # Section 8 — Session Filter
+    # Section 9 — Smart time/learning filters (opt-in; default OFF so activity is
+    # NOT reduced unless the user deliberately chooses quality over quantity).
     st.divider()
-    st.subheader("🌍 Session Filter")
-    bool_toggle("Session Filter", f"{strategy}_session_filter", False)
-    bool_toggle("London 08:00-12:00 UTC", f"{strategy}_london_on", True)
-    bool_toggle("New York 13:00-17:00 UTC", f"{strategy}_ny_on", True)
-    bool_toggle("Asia 00:00-04:00 UTC", f"{strategy}_asia_on", True)
-    bool_toggle("Weekend Trading Off", f"{strategy}_weekend_off", False)
-
-    # Section 9 — Correlation Filter
-    st.divider()
-    st.subheader("🔗 Correlation Filter")
-    corr_on = bool_toggle("Correlation Filter", f"{strategy}_corr_filter", True)
-    if corr_on:
-        slider("Max same-direction trades", f"{strategy}_max_corr_trades", 1, 5, 1,
-               db.get_int(f"{strategy}_max_corr_trades", 2), is_int=True)
+    st.subheader("🕐 Smart Filters (time edge — optional)")
+    st.caption("**OFF by default.** When ON, the bot SKIPS entries in contexts "
+               "where its OWN closed-trade history shows a poor win rate — higher "
+               "quality but FEWER entries. Each needs 10+ trades in that context "
+               "before it activates, so early on it changes nothing.")
+    # Batched so toggling these doesn't rerun ("connecting") on every tap — the
+    # form name is strategy-scoped because engine_tab renders for both slots.
+    with settings_form(f"{strategy}_smart_filters", "💾 Apply Smart Filters"):
+        bool_toggle("🕐 Best-hours filter — skip UTC hours that keep losing",
+                    f"{strategy}_hour_filter", False)
+        bool_toggle("🌏 Session×pair filter — skip losing session+pair combos",
+                    f"{strategy}_session_pair_filter", False)
+        bool_toggle("↕️ Direction filter — skip a losing BUY/SELL side on a pair",
+                    f"{strategy}_dir_filter", False)
+    st.caption("These answer \"which time / direction is worth trading\" from the "
+               "bot's real results. ON = fewer, higher-quality entries · OFF = "
+               "maximum activity (recommended until you have plenty of trades).")
 
     # Section 10 — Live Trades
     st.divider()
@@ -709,11 +926,13 @@ def engine_tab(strategy, title, entry_opts, confirm_opts, trend_opts, swing=Fals
     st.subheader("📅 Today Stats")
     _today_stats(strategy)
 
-    # Save & notify — settings already auto-save on change; this confirms + pings Telegram.
+    # Settings save the moment you change them (or via a section's Apply button);
+    # this only pings Telegram, so label it honestly — it is NOT the save action.
     st.divider()
-    if st.button(f"💾 Save {strategy.title()} Settings", key=f"{strategy}_savenotify", type="primary"):
-        tg.send_message(f"⚙️ <b>{strategy.title()} settings saved</b>\n" + tg.build_status_text())
-        st.success("Saved ✅ (settings apply live to the running bot; Telegram notified)")
+    if st.button(f"📤 Notify Telegram of {strategy.title()} settings",
+                 key=f"{strategy}_savenotify"):
+        tg.send_message(f"⚙️ <b>{strategy.title()} settings</b>\n" + tg.build_status_text())
+        st.success("Telegram notified ✅ (settings already saved live / via each Apply button)")
 
 
 def _market_context_display(strategy):
@@ -774,6 +993,8 @@ def _today_stats(strategy):
     d[0].metric("Wins", len(wins))
     d[1].metric("Losses", len(trades) - len(wins))
     d[2].metric("Fees", f"${fees:,.2f}")
+    st.caption("↻ Resets automatically at 00:00 UTC (~6:30 AM MMT) each day. "
+               "Past days are archived in Dashboard → 📅 Trade History.")
 
 
 def _close_one(pos):
@@ -785,6 +1006,50 @@ def _close_one(pos):
 def _close_all_for(strategy):
     for p in db.get_open_positions(strategy=strategy):
         _close_one(p)
+
+
+def _restart_engine():
+    """Restart the trading engine systemd service so freshly pulled code / new
+    settings take effect. Targets futures-engine ONLY — restarting futures-bot
+    would kill this dashboard. Returns (ok, message)."""
+    import subprocess
+    try:
+        r = subprocess.run(["systemctl", "restart", "futures-engine"],
+                           capture_output=True, text=True, timeout=30)
+        if r.returncode == 0:
+            return True, "✅ Engine restarted — new code / config is now live."
+        err = (r.stderr or r.stdout or "").strip()
+        return False, f"Restart failed ({err or 'permission?'}). Run from terminal: systemctl restart futures-engine"
+    except Exception as e:  # noqa: BLE001
+        return False, f"Restart error: {e}. Run from terminal: systemctl restart futures-engine"
+
+
+def _emergency_close_all():
+    """Panic button: stop BOTH engines, market-CLOSE every open position (paper +
+    real, both engines), then cancel any resting orders. Returns how many
+    positions were closed. Unlike the old 'stop', this actually CLOSES positions
+    so nothing is left naked."""
+    db.save_setting("emergency_stop", "1")
+    db.save_setting("scalping_bot_on", "0")
+    db.save_setting("swing_bot_on", "0")
+    closed = 0
+    for p in db.get_open_positions():
+        try:
+            _close_one(p)
+            closed += 1
+        except Exception:  # noqa: BLE001
+            pass
+    for sym in [s.strip() for s in db.get_setting("selected_pairs", "").split(",") if s.strip()]:
+        for mode in ("test", "real"):
+            try:
+                orders.cancel_all_orders(sym, mode)
+            except Exception:  # noqa: BLE001
+                pass
+    try:
+        tg.notify_engine_stop("Emergency CLOSE ALL from dashboard")
+    except Exception:  # noqa: BLE001
+        pass
+    return closed
 
 
 def _place_test_trade(strategy):
@@ -821,6 +1086,39 @@ def _place_test_trade(strategy):
 # ===========================================================================
 def tab_settings():
     st.subheader("⚙️ Settings")
+
+    # --- Swing Plan selector (swing slot only; scalping runs on its own) -----
+    import swing_plans
+    st.markdown("### 📈 Swing Plan  (Scalping runs separately — see its tab)")
+    active = swing_plans.active_swing_plan()
+    if active:
+        st.success(f"🔒 **Swing = Plan {active} ({swing_plans.PLAN_NAMES[active]}).** "
+                   f"{swing_plans.PLAN_DESC[active]}. Walk-forward robust.")
+    else:
+        st.warning("✏️ **Swing = custom** — not matching any validated plan. "
+                   "Pick one below to snap to a validated swing config.")
+    _plan_labels = {n: f"Plan {n} — {swing_plans.PLAN_NAMES[n]}: {swing_plans.PLAN_DESC[n]}"
+                    for n in (1, 2, 3)}
+    # Radio + Apply live inside a st.form so picking a plan does NOT trigger a
+    # mid-pick rerun that snaps the choice back to the running plan (the old bug:
+    # you could never move off Plan 2). The form holds your selection until you
+    # press Apply; index just sets the default to whatever is currently active.
+    _default_idx = (active - 1) if active in (1, 2, 3) else 0
+    with st.form("swing_plan_form"):
+        _pick = st.radio(
+            "Pick your SWING strategy (this only sets the swing engine):",
+            [1, 2, 3], index=_default_idx, format_func=lambda n: _plan_labels[n])
+        _apply = st.form_submit_button("✅ Apply Swing Plan", type="primary")
+    if _apply:
+        swing_plans.apply_swing_plan(_pick)
+        st.success(f"✅ Swing set to Plan {_pick} ({swing_plans.PLAN_NAMES[_pick]}). "
+                   "Takes effect on the next engine scan — no restart needed.")
+        st.rerun()
+    st.caption("All three swing plans are walk-forward robust (edge held across 3 "
+               "eras, newest PF≥1.2). This selector changes ONLY the swing engine. "
+               "The Scalping engine (reversion RSI<20, 1:3) runs independently on "
+               "its own slot and is unaffected — tune it on the Scalping tab.")
+    st.divider()
 
     with st.expander("🔌 1. API Configuration", expanded=False):
         st.markdown("**🧪 Testnet**")
@@ -866,10 +1164,17 @@ def tab_settings():
         st.caption(f"HF this month: {news.hf_requests_month()}/30000 | "
                    f"Status: {'🟢 connected' if hf_ok else '🔴 no token'}")
         if st.button("💾 Save News/AI Keys"):
+            # Force-persist from the widgets first (the old button only notified
+            # Telegram and relied on on_change, so mobile edits could be lost).
+            for _k in ("gnews_api", "hf_token"):
+                _v = st.session_state.get(f"w_{_k}")
+                if _v:
+                    db.save_setting(_k, _v)
             tg.send_message("📰 <b>News/AI keys saved</b> "
                             f"(GNews {'✅' if db.get_setting('gnews_api') else '—'}, "
-                            f"HF {'✅' if hf_ok else '—'})")
+                            f"HF {'✅' if db.get_setting('hf_token') else '—'})")
             st.success("Saved ✅ (Telegram notified)")
+            st.rerun()
 
         st.markdown("---")
         st.markdown("**🤖 Claude AI Monitor** (4-hour auto analysis)")
@@ -897,41 +1202,64 @@ def tab_settings():
                 st.success("Removed — monitor will fall back to rule-based analysis")
                 st.rerun()
 
-    with st.expander("🤖 3. LightGBM Model", expanded=False):
-        select("Retrain Schedule", "lgbm_retrain_schedule", ["daily", "weekly", "manual"],
-               db.get_setting("lgbm_retrain_schedule", "weekly"))
-        select("Training Period", "lgbm_train_period", ["1m", "3m", "6m", "1y"],
-               db.get_setting("lgbm_train_period", "6m"))
-        st.write(f"Last Trained: {db.get_setting('lgbm_last_trained', '—')}")
-        st.write(f"Accuracy: {db.get_setting('lgbm_accuracy', '0')}")
-        if lgbm.is_training():
-            st.info("Training in progress…")
-        if st.button("🔄 RETRAIN NOW"):
-            lgbm.train_in_background()
-            st.toast("Training started in background")
-        st.caption("Features: RSI, EMA ratios, BB position/width, Stoch K, CCI, ADX, "
-                   "MACD hist, Supertrend, ATR ratio, Volume ratio, Funding, OI%, "
-                   "Sentiment, Candle/Wick ratios, Trend/Reversion/Breakout signals")
-        st.caption("Labels: BUY=2 (>+1% in 3 candles), HOLD=1, SELL=0 (<-1%)")
-
     with st.expander("🚦 4. Global Risk Limits", expanded=False):
-        slider("Daily Loss Limit %", "daily_loss_limit_pct", 1.0, 20.0, 0.5,
-               db.get_float("daily_loss_limit_pct", 10.0))
-        slider("Max Drawdown Pause %", "max_drawdown_pause_pct", 10.0, 50.0, 1.0,
-               db.get_float("max_drawdown_pause_pct", 25.0))
-        slider("Max Concurrent Trades", "max_concurrent_trades", 1, 10, 1,
-               db.get_int("max_concurrent_trades", 5), is_int=True)
-        slider("Lev×Risk Hard Cap %", "lev_risk_hard_cap_pct", 5.0, 20.0, 0.5,
-               db.get_float("lev_risk_hard_cap_pct", 10.0))
-        slider("Min Risk:Reward Ratio", "min_rr_ratio", 1.0, 3.0, 0.1,
-               db.get_float("min_rr_ratio", 1.5))
-        st.caption("Skip entries where TP1 distance < this × SL distance. "
-                   "1.5 = TP must be 1.5× further than SL. Fixes inverted R:R.")
-        slider("Paper Slippage % (realism)", "paper_slippage_pct", 0.0, 0.30, 0.01,
-               db.get_float("paper_slippage_pct", 0.05))
-        st.caption("Paper trades simulate real entry + stop-market slippage so paper "
-                   "results mirror REAL conditions (fees already included). 0.05% ≈ "
-                   "typical liquid-pair slippage. Set 0 for idealised fills.")
+        g_auto = db.get_bool("auto_pilot", False) or bool_toggle(
+            "🤖 Auto Global Risk (bot-managed limits)", "global_auto_risk", False)
+        if g_auto:
+            st.caption("🤖 Auto → Max Concurrent scales with balance "
+                       "(<$100→2, <$1k→4, <$10k→6, else 8); Min R:R adapts to "
+                       "win-rate (losing→2.5, even→2.0, winning→1.8); Min TP "
+                       "floor 0.4%. Other limits below stay as safe guard rails.")
+        st.caption("Adjust everything, then press **Apply** once (avoids the "
+                   "dashboard reloading on every change).")
+        with settings_form("global_risk_form"):
+            slider("Daily Loss Limit %", "daily_loss_limit_pct", 1.0, 20.0, 0.5,
+                   db.get_float("daily_loss_limit_pct", 10.0))
+            slider("Max Drawdown Pause %", "max_drawdown_pause_pct", 10.0, 50.0, 1.0,
+                   db.get_float("max_drawdown_pause_pct", 25.0))
+            if not g_auto:
+                slider("Max Concurrent Trades", "max_concurrent_trades", 1, 40, 1,
+                       db.get_int("max_concurrent_trades", 5), is_int=True)
+            slider("Lev×Risk Hard Cap %", "lev_risk_hard_cap_pct", 5.0, 20.0, 0.5,
+                   db.get_float("lev_risk_hard_cap_pct", 10.0))
+            # Correlation caps — limit same-direction trades PER engine so one
+            # market move can't hit a pile of positions at once (e.g. a market-wide
+            # downtrend firing 6 swing SELLs together). Applies in Auto + Manual.
+            st.markdown("**🔗 Correlation caps** — max same-direction trades per engine")
+            bool_toggle("Swing: limit correlated trades", "swing_corr_filter", False)
+            slider("Swing max same-direction trades", "swing_max_corr_trades", 1, 10, 1,
+                   db.get_int("swing_max_corr_trades", 3), is_int=True)
+            bool_toggle("Scalping: limit correlated trades", "scalping_corr_filter", False)
+            slider("Scalping max same-direction trades", "scalping_max_corr_trades", 1, 10, 1,
+                   db.get_int("scalping_max_corr_trades", 2), is_int=True)
+            st.caption("When ON, the engine blocks a new BUY/SELL once it already "
+                       "holds this many open trades on the SAME side — caps the "
+                       "'whole market moved and every position went the same way' risk.")
+            if not g_auto:
+                # min 0.2 so the breakout-1d config (tight SL, R:R sometimes < 1)
+                # is representable — a 1.0 floor here silently blocks breakout entries.
+                slider("Min Risk:Reward Ratio", "min_rr_ratio", 0.2, 3.0, 0.1,
+                       db.get_float("min_rr_ratio", 0.3))
+                st.caption("Skip entries where TP1 distance < this × SL distance. "
+                           "Keep LOW (0.3) — breakout's SL sits at the broken level "
+                           "(tight), so a high floor blocks every breakout entry.")
+                slider("Min TP Distance % (fee floor)", "min_tp_pct", 0.0, 2.0, 0.05,
+                       db.get_float("min_tp_pct", 0.4))
+                st.caption("Skip entries whose TP1 target is closer than this %. "
+                           "Round-trip fee+slippage ≈ 0.13%, so a 0.4% floor keeps "
+                           "wins well above costs and filters fee-eaten micro-scalps.")
+            bool_toggle("ATR-based Stop Loss (Auto mode)", "atr_sl_enabled", True)
+            slider("ATR SL Multiplier", "atr_sl_mult", 0.5, 4.0, 0.1,
+                   db.get_float("atr_sl_mult", 1.5))
+            st.caption("In Auto mode, set SL = entry ∓ (this × ATR) instead of the "
+                       "strategy's structural SL. Scales risk to volatility — avoids "
+                       "the far EMA50 stops that caused oversized losses. Lower = "
+                       "tighter, higher = wider.")
+            slider("Paper Slippage % (realism)", "paper_slippage_pct", 0.0, 0.30, 0.01,
+                   db.get_float("paper_slippage_pct", 0.05))
+            st.caption("Paper trades simulate real entry + stop-market slippage so paper "
+                       "results mirror REAL conditions (fees already included). 0.05% ≈ "
+                       "typical liquid-pair slippage. Set 0 for idealised fills.")
 
     with st.expander("💵 5. Starting Balance / Reset Paper Account", expanded=False):
         st.write(f"Current paper start capital: **${db.get_float('starting_balance', 0):,.2f}**")
@@ -966,15 +1294,37 @@ def tab_settings():
     with st.expander("📱 6. Telegram", expanded=False):
         text("Bot Token", "telegram_token", password=True, show_saved=True)
         text("Chat ID", "telegram_chat_id", password=True, show_saved=True)
-        bool_toggle("Notify Trade Open (entry)", "notify_trade_open", True)
-        bool_toggle("Notify Trade Close", "notify_trade_close", True)
-        bool_toggle("Notify Daily Report (00:00 UTC)", "notify_daily_report", True)
-        bool_toggle("Notify Risk Alert", "notify_risk_alert", True)
-        bool_toggle("Notify Engine Stop", "notify_engine_stop", True)
-        st.markdown("---")
-        bool_toggle("🔄 Periodic Status Update", "notify_status_on", True)
-        slider("Status interval (hours)", "notify_status_interval_hr", 1.0, 24.0, 1.0,
-               db.get_float("notify_status_interval_hr", 4.0))
+        st.caption("⚠️ First open your bot in Telegram and tap **Start** — a bot "
+                   "cannot message you until you do. Chat ID = YOUR numeric id "
+                   "(get it from @userinfobot), not the bot's name.")
+        if st.button("💾 Save & Test Telegram"):
+            # Force-persist from the widgets — on mobile the per-field on_change
+            # can miss the last keystrokes, which is why the keys seemed to "revert".
+            for _k in ("telegram_token", "telegram_chat_id"):
+                _v = st.session_state.get(f"w_{_k}")
+                if _v:  # never wipe a saved key with a blank box
+                    db.save_setting(_k, _v)
+            # Test immediately and show the REAL reason if it fails, so the user
+            # isn't left guessing (the #1 cause is not having pressed Start).
+            if tg.test_telegram():
+                st.success("✅ Saved and a test message was delivered to your chat.")
+            else:
+                _err = db.get_setting("telegram_last_error", "") or "unknown — see Events log"
+                st.error(f"Saved, but the test did NOT deliver → {_err}\n\n"
+                         "Fix: (1) open the bot in Telegram and tap Start, "
+                         "(2) Chat ID must be your numeric id, (3) token not revoked.")
+        # Notification toggles batched — flip several, then one Apply (no rerun
+        # per toggle). Token/Chat + their Save button stay live above.
+        with settings_form("tg_notify", "💾 Apply Notification Settings"):
+            bool_toggle("Notify Trade Open (entry)", "notify_trade_open", True)
+            bool_toggle("Notify Trade Close", "notify_trade_close", True)
+            bool_toggle("Notify Daily Report (00:00 UTC)", "notify_daily_report", True)
+            bool_toggle("Notify Risk Alert", "notify_risk_alert", True)
+            bool_toggle("Notify Engine Stop", "notify_engine_stop", True)
+            st.markdown("---")
+            bool_toggle("🔄 Periodic Status Update", "notify_status_on", True)
+            slider("Status interval (hours)", "notify_status_interval_hr", 1.0, 24.0, 1.0,
+                   db.get_float("notify_status_interval_hr", 4.0))
         cols_tg = st.columns(2)
         if cols_tg[0].button("📤 Test Telegram"):
             if tg.test_telegram():
@@ -989,48 +1339,15 @@ def tab_settings():
                 st.error("Set token first")
 
     with st.expander("🧹 7. VPS Optimizer", expanded=False):
-        bool_toggle("Auto Clean", "vps_auto_clean_on", True)
-        slider("RAM Threshold %", "vps_ram_threshold_pct", 50.0, 90.0, 1.0,
-               db.get_float("vps_ram_threshold_pct", 80.0))
+        with settings_form("vps_opt", "💾 Apply VPS Settings"):
+            bool_toggle("Auto Clean", "vps_auto_clean_on", True)
+            slider("RAM Threshold %", "vps_ram_threshold_pct", 50.0, 90.0, 1.0,
+                   db.get_float("vps_ram_threshold_pct", 80.0))
         st.write(f"Current RAM: {vps_optimizer.current_ram_pct():.1f}%")
         st.caption(f"Last clean: {db.get_setting('vps_last_clean', '—')}")
         if st.button("🧽 Clean Now"):
             ram = vps_optimizer.force_clean("manual")
             st.toast(f"Cleaned → RAM {ram:.1f}%")
-
-    with st.expander("🌑 8. News Blackout Mode", expanded=False):
-        bool_toggle("Blackout Mode", "blackout_on", False)
-        slider("Volume Spike x", "blackout_volume_spike_x", 2.0, 10.0, 0.5,
-               db.get_float("blackout_volume_spike_x", 5.0))
-        slider("ATR Expansion x", "blackout_atr_expand_x", 1.5, 5.0, 0.5,
-               db.get_float("blackout_atr_expand_x", 3.0))
-        slider("Freeze Before (min)", "blackout_before_min", 5, 60, 5,
-               db.get_int("blackout_before_min", 15), is_int=True)
-        slider("Freeze After (min)", "blackout_after_min", 5, 60, 5,
-               db.get_int("blackout_after_min", 15), is_int=True)
-        select("Action", "blackout_action", ["no_entry", "close_all"],
-               db.get_setting("blackout_action", "no_entry"))
-        active = db.get_bool("blackout_active", False)
-        if active:
-            st.error("🔴 BLACKOUT ACTIVE")
-        else:
-            st.success("🟢 Clear")
-        if active and st.button("Clear Blackout"):
-            db.save_setting("blackout_active", "0")
-            st.rerun()
-
-    with st.expander("📈 9. Performance Optimizer", expanded=False):
-        bool_toggle("Win Streak Bonus", "win_streak_bonus_on", False)
-        slider("Win streak count", "streak_win_count", 2, 5, 1,
-               db.get_int("streak_win_count", 3), is_int=True)
-        slider("Bonus per win %", "streak_bonus_pct", 0.05, 0.5, 0.05,
-               db.get_float("streak_bonus_pct", 0.1))
-        slider("Loss streak count", "streak_loss_count", 2, 5, 1,
-               db.get_int("streak_loss_count", 3), is_int=True)
-        slider("Risk cut per loss %", "streak_cut_pct", 0.1, 1.0, 0.1,
-               db.get_float("streak_cut_pct", 0.5))
-        st.caption(f"Current streak adj: {db.get_float('streak_risk_adj', 0):+.2f}% | "
-                   f"Win streak {db.get_int('win_streak')} | Loss streak {db.get_int('loss_streak')}")
 
     with st.expander("🔒 11. Login Password", expanded=False):
         st.caption("Set the dashboard login password. Leave empty to disable login.")
@@ -1091,9 +1408,11 @@ def tab_settings():
             st.success("Restored. Now restart the service: `systemctl restart futures-bot`")
 
     st.divider()
-    if st.button("💾 SAVE ALL SETTINGS", type="primary"):
+    st.caption("ℹ️ Settings save automatically as you change them, or via each "
+               "section's **Apply** button — there is no separate 'save all' step.")
+    if st.button("📤 Notify Telegram of current settings"):
         tg.notify_settings_saved()
-        st.success("All settings saved ✅ (Telegram notified if configured)")
+        st.success("Telegram notified ✅ (your settings are already saved)")
 
 
 # ===========================================================================
@@ -1142,8 +1461,11 @@ def main():
     with t1:
         tab_dashboard()
     with t2:
+        # Higher TFs (4h/6h/12h) included so the slot can run the robust trend /
+        # breakout edges (best on 6h), not just fast reversion scalps.
         engine_tab("scalping", "⚡ Scalping Engine",
-                   ["1m", "3m", "5m", "15m"], ["5m", "15m", "30m"], ["15m", "1h", "4h"])
+                   ["5m", "15m", "30m", "1h", "4h", "6h", "12h"], ["15m", "1h", "4h"],
+                   ["1h", "4h", "1d"])
     with t3:
         engine_tab("swing", "📈 Swing Engine",
                    ["1h", "4h", "1d"], ["4h", "1d"], ["1d", "3d", "1w"], swing=True)

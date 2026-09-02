@@ -80,7 +80,7 @@ def _sentiment_score(funding_rate, oi_change_pct, news_score):
 
 def run(df_entry, trend_res, reversion_res, breakout_res,
         funding_rate=0.0, oi_change_pct=0.0, news_score=0.0,
-        ai_threshold=0.75):
+        ai_threshold=0.75, use_model=True):
     if not has_enough(df_entry):
         return dict(NONE)
 
@@ -107,7 +107,10 @@ def run(df_entry, trend_res, reversion_res, breakout_res,
 
     # Step 2 — LightGBM probability.
     lgbm_score, lgbm_direction = 0.0, 1
-    model = get_model()
+    # use_model=False (AI model toggled off) → ignore the LightGBM direction model
+    # entirely and trade on pure technical/structure/volume signals. The live data
+    # showed the model was anti-predictive, so this lets it be switched off.
+    model = get_model() if use_model else None
     if model is not None:
         feats = build_features(
             df_entry,

@@ -188,8 +188,43 @@ def init_db():
         if "entry_features" not in existing_cols:
             c.execute("ALTER TABLE active_positions ADD COLUMN entry_features TEXT")
 
+        # Migration: record the planned SL/TP1 on the CLOSED trade too. Without
+        # them the risk distance is unknown after the fact, so the realised
+        # R-multiple (did the 1:3 actually pay 3R?) cannot be measured — which is
+        # exactly what the forward test has to verify.
+        trade_cols = {r[1] for r in c.execute("PRAGMA table_info(trades)").fetchall()}
+        if "sl_price" not in trade_cols:
+            c.execute("ALTER TABLE trades ADD COLUMN sl_price REAL")
+        if "tp1_price" not in trade_cols:
+            c.execute("ALTER TABLE trades ADD COLUMN tp1_price REAL")
+        # `strategy` only ever held the SLOT name (swing/scalping). Over the bot's
+        # life the scalping slot ran reversion, then trend, then emastoch — all
+        # recorded identically — so "which strategy actually won?" was
+        # unanswerable from history. Record the firing strategy and the entry
+        # timeframe on every closed trade so that question can be answered.
+        if "strategy_name" not in trade_cols:
+            c.execute("ALTER TABLE trades ADD COLUMN strategy_name TEXT")
+        if "timeframe" not in trade_cols:
+            c.execute("ALTER TABLE trades ADD COLUMN timeframe TEXT")
+        if "strategy_name" not in existing_cols:
+            c.execute("ALTER TABLE active_positions ADD COLUMN strategy_name TEXT")
+
+        # Stamp every trade with the configuration that produced it. Without
+        # this, changing any setting poisons the whole history: results from
+        # the old and the new settings sit in one undivided pile, so the only
+        # honest thing left to say is "start the 60 days again". With it, a
+        # settings change simply opens a new bucket and the earlier buckets
+        # stay valid and comparable.
+        for col, decl in (("rr", "REAL"), ("risk_pct", "REAL"),
+                          ("config_id", "TEXT"), ("config_desc", "TEXT")):
+            if col not in trade_cols:
+                c.execute(f"ALTER TABLE trades ADD COLUMN {col} {decl}")
+            if col not in existing_cols:
+                c.execute(f"ALTER TABLE active_positions ADD COLUMN {col} {decl}")
+
         conn.commit()
     _seed_defaults()
+    _seed_from_env()
 
 
 # ---------------------------------------------------------------------------
@@ -214,13 +249,16 @@ def learning_count():
 
 def learning_dataset():
     """Return (list_of_feature_lists, list_of_won) from the learning table.
-    Only real trades (paper_mode=0) are used so the model learns from live
-    market conditions rather than simulated fills."""
+    By default (learn_from_paper=1) every closed trade feeds the win model, so
+    the bot keeps self-learning while paper trading. Set learn_from_paper=0 to
+    restrict learning to real fills (paper_mode=0) once trading live."""
     import json as _json
     conn = get_conn()
-    rows = conn.execute(
-        "SELECT features, won FROM learning WHERE features IS NOT NULL AND paper_mode=0"
-    ).fetchall()
+    if get_bool("learn_from_paper", True):
+        q = "SELECT features, won FROM learning WHERE features IS NOT NULL"
+    else:
+        q = "SELECT features, won FROM learning WHERE features IS NOT NULL AND paper_mode=0"
+    rows = conn.execute(q).fetchall()
     X, y = [], []
     for r in rows:
         try:
@@ -262,6 +300,50 @@ def get_bool(key, default=False):
     """Settings store booleans as '0'/'1' strings."""
     val = get_setting(key, "1" if default else "0")
     return str(val) == "1"
+
+
+# Settings that change what a slot actually trades. A trade is only comparable
+# with another trade if these matched, so they are what identifies a config.
+_CONFIG_KEYS = ("timeframe", "trend_on", "breakout_on", "reversion_on",
+                "emastoch_on", "hybrid_on", "fixed_rr", "mtf_filter",
+                "auto_risk", "base_risk_pct", "base_leverage")
+
+
+def config_snapshot(slot):
+    """(config_id, human description) for a slot's current settings.
+
+    config_id is a short stable hash: the same settings always give the same
+    id, and any change to a setting that affects trading gives a new one. Trades
+    stamped with it can be grouped afterwards, so changing a setting starts a
+    fresh bucket instead of invalidating everything recorded before it.
+    """
+    import hashlib
+
+    parts = [f"{k}={get_setting(f'{slot}_{k}', '')}" for k in _CONFIG_KEYS]
+    raw = f"{slot}|" + "|".join(parts)
+    cid = hashlib.sha1(raw.encode()).hexdigest()[:8]
+
+    on = [n for n, k in (("trend", "trend_on"), ("breakout", "breakout_on"),
+                         ("reversion", "reversion_on"), ("emastoch", "emastoch_on"),
+                         ("hybrid", "hybrid_on"))
+          if get_bool(f"{slot}_{k}", False)]
+    rr = get_float(f"{slot}_fixed_rr", 0.0)
+    desc = (f"{'+'.join(on) or 'none'} {get_setting(f'{slot}_timeframe', '?')} "
+            f"1:{rr:g} r{get_float(f'{slot}_base_risk_pct', 0.0):g}%"
+            + ("(auto)" if get_bool(f"{slot}_auto_risk", False) else ""))
+    return cid, desc
+
+
+def auto_flag(key, default=True):
+    """A per-feature 'auto' flag that is ALSO forced on by the master Auto Pilot.
+
+    When auto_pilot is on the bot fully self-manages (timeframe, AI threshold,
+    risk sizing, ATR TP/SL, trailing, break-even, max-hold and every adaptive
+    win-rate filter), so the user can switch one toggle and walk away. When
+    auto_pilot is off, the individual per-engine auto toggle applies as before."""
+    if get_bool("auto_pilot", False):
+        return True
+    return get_bool(key, default)
 
 
 def save_setting(key, value):
@@ -392,14 +474,45 @@ def get_trades(limit=None, paper_mode=None):
     return [dict(r) for r in conn.execute(q, args).fetchall()]
 
 
-def get_today_trades():
-    """All trades whose exit happened today (UTC)."""
+def get_today_trades(paper_mode=None):
+    """Trades whose exit happened today (UTC). paper_mode keeps the paper and
+    real ledgers separate so the daily-loss guard never mixes simulated PnL into
+    a real account's circuit breaker (or vice versa)."""
     conn = get_conn()
     today = today_utc_str()
+    q = ("SELECT * FROM trades "
+         "WHERE substr(COALESCE(exit_timestamp, timestamp),1,10)=?")
+    args = [today]
+    if paper_mode is not None:
+        q += " AND paper_mode=?"
+        args.append(paper_mode)
+    q += " ORDER BY id DESC"
+    rows = conn.execute(q, tuple(args)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_trades_on_date(date_str):
+    """All closed trades whose exit (or open) fell on date_str (YYYY-MM-DD, UTC)."""
+    conn = get_conn()
     rows = conn.execute(
         "SELECT * FROM trades WHERE substr(COALESCE(exit_timestamp, timestamp),1,10)=? "
         "ORDER BY id DESC",
-        (today,),
+        (date_str,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_daily_pnl(days=14):
+    """Per-day rollup for the last `days` distinct trading days (newest first):
+    date, trade count, win count, net PnL — for a calendar-style history view."""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT substr(COALESCE(exit_timestamp, timestamp),1,10) AS d, "
+        "COUNT(*) AS n, "
+        "SUM(CASE WHEN COALESCE(net_pnl,0) > 0 THEN 1 ELSE 0 END) AS wins, "
+        "COALESCE(SUM(net_pnl),0) AS net "
+        "FROM trades GROUP BY d ORDER BY d DESC LIMIT ?",
+        (int(days),),
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -641,11 +754,26 @@ DEFAULTS = {
     "starting_balance": "0",
     "daily_loss_limit_pct": "10.0",
     "max_drawdown_pause_pct": "25.0",
-    "max_concurrent_trades": "2",
+    "max_concurrent_trades": "4",
     "lev_risk_hard_cap_pct": "10.0",
     "paper_slippage_pct": "0.05",
-    "min_rr_ratio": "1.5",
-    "selected_pairs": "BTCUSDT,ETHUSDT,SOLUSDT",
+    "min_rr_ratio": "2.0",
+    "min_tp_pct": "0.4",
+    "learn_from_paper": "1",
+    "atr_sl_enabled": "1",
+    "atr_sl_mult": "2.5",
+    # Master Auto Pilot: one switch forces every per-engine auto + adaptive
+    # filter on so the bot fully self-manages from win-rate history + balance.
+    "auto_pilot": "0",
+    # LightGBM direction model influence on entries (off = pure technical signals).
+    "ai_model_on": "1",
+    # 4-hourly Claude/rule-based auto-adjuster (ai_monitor.py). OFF: it's a
+    # scalping-era tool that auto-removes pairs / changes risk, which fights the
+    # breakout-1d broad-basket config. Left off so it can't mutate settings.
+    "ai_monitor_on": "0",
+    # Global risk limits managed automatically (max concurrent scales w/ balance).
+    "global_auto_risk": "0",
+    "selected_pairs": "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,LINKUSDT,AVAXUSDT,DOGEUSDT,ADAUSDT,LTCUSDT,DOTUSDT,ATOMUSDT",
 
     # Scalping engine
     "scalping_bot_on": "0",
@@ -684,7 +812,7 @@ DEFAULTS = {
     "scalping_funding_filter": "0",
     "scalping_funding_weight": "0.20",
     "scalping_corr_filter": "1",
-    "scalping_max_corr_trades": "2",
+    "scalping_max_corr_trades": "3",
 
     # Swing engine
     "swing_bot_on": "0",
@@ -705,10 +833,10 @@ DEFAULTS = {
     "swing_sl_pct": "2.0",
     "swing_partial_tp": "1",
     "swing_auto_be": "1",
-    "swing_trail_pct": "1.5",
+    "swing_trail_pct": "2.0",
     "swing_max_hold_days": "2",
     "swing_ai_threshold": "0.85",
-    "swing_min_lgbm": "0.65",
+    "swing_min_lgbm": "0.0",
     "swing_trend_on": "1",
     "swing_reversion_on": "1",
     "swing_breakout_on": "1",
@@ -773,7 +901,7 @@ DEFAULTS = {
     "swing_tp_pct": "4.0",
     "scalping_trail_auto": "0",
     "swing_trail_auto": "0",
-    "scalping_trail_pct": "0.5",
+    "scalping_trail_pct": "0.7",
     "scalping_auto_threshold": "1",
     "swing_auto_threshold": "1",
     "swing_auto_maxhold": "1",
@@ -791,6 +919,11 @@ DEFAULTS = {
     "scalping_mode": "paper",
     "swing_mode": "paper",
 
+    # Reversion tuning (opt-in; default OFF so backtests/swing are unchanged).
+    # RSI-extreme gate + fixed R:R exit — the best scalping config found (paper).
+    "reversion_rsi_extreme": "0",
+    "reversion_fixed_rr": "0",
+
     # Runtime/internal flags
     "blackout_active": "0",
     "win_streak": "0",
@@ -807,3 +940,48 @@ def _seed_defaults():
     missing = {k: v for k, v in DEFAULTS.items() if k not in existing}
     if missing:
         save_settings(missing)
+
+
+# Map .env / environment variable names to settings keys. Lets API keys, tokens
+# etc. live in trading_bot/.env (git-ignored) so they survive a DB reset and
+# never need re-entering in the dashboard.
+_ENV_MAP = {
+    "BINANCE_TESTNET_API": "binance_testnet_api",
+    "BINANCE_TESTNET_SECRET": "binance_testnet_secret",
+    "BINANCE_LIVE_API": "binance_live_api",
+    "BINANCE_LIVE_SECRET": "binance_live_secret",
+    "HF_TOKEN": "hf_token",
+    "GNEWS_API": "gnews_api",
+    "TELEGRAM_TOKEN": "telegram_token",
+    "TELEGRAM_CHAT_ID": "telegram_chat_id",
+    "CLAUDE_API_KEY": "claude_api_key",
+}
+
+
+def _seed_from_env():
+    """Seed secret settings from trading_bot/.env (and the process environment)
+    so keys persist across DB resets / fresh clones. Only fills a setting that is
+    currently empty — a value set in the dashboard is never overwritten."""
+    values = {}
+    env_path = os.path.join(os.path.dirname(DB_PATH), ".env")
+    try:
+        if os.path.exists(env_path):
+            with open(env_path) as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    k, v = line.split("=", 1)
+                    values[k.strip()] = v.strip().strip('"').strip("'")
+    except Exception:  # noqa: BLE001
+        pass
+    for env_key in _ENV_MAP:
+        if os.environ.get(env_key):
+            values[env_key] = os.environ[env_key]  # real env wins over .env file
+    for env_key, set_key in _ENV_MAP.items():
+        val = values.get(env_key, "")
+        if val and not (get_setting(set_key) or ""):
+            try:
+                save_setting(set_key, val)
+            except Exception:  # noqa: BLE001
+                pass
