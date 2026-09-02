@@ -148,17 +148,16 @@ def main() -> int:
               f"{', '.join(p['symbol'] for p in open_scalp)}")
         print("These keep their stops and targets -- only new entries stop.")
 
-    if not changes:
-        print("\nAlready configured as recommended. Nothing to do.")
-        return 0
-
     if not apply:
-        print(f"\n{len(changes)} setting(s) differ. Re-run with --apply to write them.")
+        print(f"\n{len(changes)} setting(s) differ. Re-run with --apply to write them."
+              if changes else "\nAlready configured as recommended. Nothing to do.")
         return 0
 
     for key, cur, want in changes:
         db.save_setting(key, want)
         db.log_event("CONFIG_APPLIED", f"{key}: {cur} -> {want}")
+    if not changes:
+        print("\nSettings already correct; re-locking so drift detection is armed.")
 
     # Record what each slot is now set to, so the engine can tell if anything
     # moves it afterwards. A setting that quietly overrode the intended setup
