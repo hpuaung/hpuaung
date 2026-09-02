@@ -197,6 +197,7 @@ def execute_order(symbol, strategy, signal, *, equity, multiplier, api_mode,
     trail_auto = 1 if db.auto_flag(f"{strategy}_trail_auto", False) else 0
     tf = db.get_setting(f"{strategy}_timeframe", "5m")
     atr_at_entry = float(signal.get("atr", 0.0)) if signal.get("atr") else 0.0
+    _cfg_id, _cfg_desc = db.config_snapshot(strategy)
 
     position = {
         "symbol": symbol,
@@ -225,6 +226,13 @@ def execute_order(symbol, strategy, signal, *, equity, multiplier, api_mode,
         # Which strategy MODULE fired (Trend/Breakout/EmaStoch/...), as opposed to
         # `strategy` which is only the slot name. Needed to attribute results.
         "strategy_name": strategy_name or "",
+        # The settings this entry was taken under, so results stay attributable
+        # after any of them change (see db.config_snapshot).
+        "config_id": _cfg_id,
+        "config_desc": _cfg_desc,
+        "rr": (abs(sized["tp1"] - entry) / abs(entry - sized["sl"])
+               if entry != sized["sl"] else 0.0),
+        "risk_pct": sized["eff_risk"],
         "lgbm_score": lgbm_score,
         "news_score": news_score,
         "effective_leverage": sized["eff_lev"],

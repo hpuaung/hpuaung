@@ -129,6 +129,12 @@ def _record_close(pos, qty, exit_price, reason, notifier=None):
         "tp1_price": pos.get("tp1"),
         "strategy_name": pos.get("strategy_name") or "",
         "timeframe": pos.get("timeframe") or "",
+        # Carried from the position so the closed trade still knows which
+        # settings produced it, whatever the settings are by the time it closes.
+        "config_id": pos.get("config_id") or "",
+        "config_desc": pos.get("config_desc") or "",
+        "rr": pos.get("rr"),
+        "risk_pct": pos.get("risk_pct"),
         # default 1 (paper), not 0 — a missing flag must not mislabel a paper
         # trade as real (that also made clear_paper_trades miss them).
         "paper_mode": pos.get("paper_mode", 1),

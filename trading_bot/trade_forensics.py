@@ -77,6 +77,38 @@ def _provenance() -> None:
     print(f"\nmtf_filter: swing={db.get_bool('swing_mtf_filter', True)}, "
           f"scalping={db.get_bool('scalping_mtf_filter', True)}"
           "   (the sweep ran with mtf=False)")
+    _by_config()
+
+
+def _by_config() -> None:
+    """Results split by the settings each trade was taken under.
+
+    This is what makes a settings change survivable: trades carry the config
+    that produced them, so changing something opens a new bucket and leaves
+    the earlier buckets intact and comparable, rather than forcing the whole
+    measurement to start over.
+    """
+    try:
+        rows = db.get_conn().execute(
+            "SELECT COALESCE(NULLIF(config_id,''),'(before tracking)') cid, "
+            "COALESCE(NULLIF(config_desc,''),'unlabelled') d, COUNT(*) n, "
+            "SUM(CASE WHEN net_pnl>0 THEN 1 ELSE 0 END) w, SUM(net_pnl) total "
+            "FROM trades GROUP BY cid, d ORDER BY n DESC").fetchall()
+    except Exception as e:  # noqa: BLE001  (column predates the migration)
+        print(f"\nconfig breakdown unavailable: {e}")
+        return
+    print("\n=== results per configuration ===")
+    print(f"{'config':10}{'settings':38}{'n':>5}{'win%':>7}{'total':>10}")
+    for r in rows:
+        n = r["n"] or 0
+        win = f"{100 * (r['w'] or 0) // n}" if n else "-"
+        print(f"{r['cid']:10}{r['d'][:37]:38}{n:>5}{win:>7}{(r['total'] or 0):>+10.2f}")
+    cur_s = db.config_snapshot("swing")
+    cur_c = db.config_snapshot("scalping")
+    print(f"\nrunning now:  swing {cur_s[0]}  {cur_s[1]}")
+    print(f"              scalping {cur_c[0]}  {cur_c[1]}")
+    print("A settings change gives a new config id. Earlier ids keep their\n"
+          "results, so the history is split, not thrown away.")
 
 
 def _open_book(slot: str) -> None:

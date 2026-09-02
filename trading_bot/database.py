@@ -209,6 +209,19 @@ def init_db():
         if "strategy_name" not in existing_cols:
             c.execute("ALTER TABLE active_positions ADD COLUMN strategy_name TEXT")
 
+        # Stamp every trade with the configuration that produced it. Without
+        # this, changing any setting poisons the whole history: results from
+        # the old and the new settings sit in one undivided pile, so the only
+        # honest thing left to say is "start the 60 days again". With it, a
+        # settings change simply opens a new bucket and the earlier buckets
+        # stay valid and comparable.
+        for col, decl in (("rr", "REAL"), ("risk_pct", "REAL"),
+                          ("config_id", "TEXT"), ("config_desc", "TEXT")):
+            if col not in trade_cols:
+                c.execute(f"ALTER TABLE trades ADD COLUMN {col} {decl}")
+            if col not in existing_cols:
+                c.execute(f"ALTER TABLE active_positions ADD COLUMN {col} {decl}")
+
         conn.commit()
     _seed_defaults()
     _seed_from_env()
@@ -287,6 +300,38 @@ def get_bool(key, default=False):
     """Settings store booleans as '0'/'1' strings."""
     val = get_setting(key, "1" if default else "0")
     return str(val) == "1"
+
+
+# Settings that change what a slot actually trades. A trade is only comparable
+# with another trade if these matched, so they are what identifies a config.
+_CONFIG_KEYS = ("timeframe", "trend_on", "breakout_on", "reversion_on",
+                "emastoch_on", "hybrid_on", "fixed_rr", "mtf_filter",
+                "auto_risk", "base_risk_pct", "base_leverage")
+
+
+def config_snapshot(slot):
+    """(config_id, human description) for a slot's current settings.
+
+    config_id is a short stable hash: the same settings always give the same
+    id, and any change to a setting that affects trading gives a new one. Trades
+    stamped with it can be grouped afterwards, so changing a setting starts a
+    fresh bucket instead of invalidating everything recorded before it.
+    """
+    import hashlib
+
+    parts = [f"{k}={get_setting(f'{slot}_{k}', '')}" for k in _CONFIG_KEYS]
+    raw = f"{slot}|" + "|".join(parts)
+    cid = hashlib.sha1(raw.encode()).hexdigest()[:8]
+
+    on = [n for n, k in (("trend", "trend_on"), ("breakout", "breakout_on"),
+                         ("reversion", "reversion_on"), ("emastoch", "emastoch_on"),
+                         ("hybrid", "hybrid_on"))
+          if get_bool(f"{slot}_{k}", False)]
+    rr = get_float(f"{slot}_fixed_rr", 0.0)
+    desc = (f"{'+'.join(on) or 'none'} {get_setting(f'{slot}_timeframe', '?')} "
+            f"1:{rr:g} r{get_float(f'{slot}_base_risk_pct', 0.0):g}%"
+            + ("(auto)" if get_bool(f"{slot}_auto_risk", False) else ""))
+    return cid, desc
 
 
 def auto_flag(key, default=True):
