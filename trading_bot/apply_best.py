@@ -36,6 +36,20 @@ import sys
 import database as db
 
 TARGET = {
+    # --- fixed risk ----------------------------------------------------------
+    # auto_risk ignores base_risk_pct entirely (orders.py:24) and sizes from
+    # risk_guard.recommended_risk(), which reads win rate alone and knows
+    # nothing about R:R: under 40% wins it returns 0.5. trend 12h 1:3 wins 35%
+    # by design -- break-even for 1:3 is 25% -- so auto mode permanently halves
+    # the size of the very strategy the sweep selected, and the win rate never
+    # climbs out of it because it is not supposed to. Fix the risk instead.
+    # 5 x 1.0 = 5, inside the lev_risk_hard_cap_pct of 10, so nothing blocks.
+    "swing_auto_risk": "0",
+    "scalping_auto_risk": "0",
+    "swing_base_risk_pct": "1.0",
+    "scalping_base_risk_pct": "1.0",
+    "swing_base_leverage": "5",
+    "scalping_base_leverage": "5",
     # --- the pick: swing = trend 12h 1:3 -------------------------------------
     "swing_bot_on": "1",
     "swing_hybrid_on": "0",
@@ -121,7 +135,7 @@ def _projection() -> None:
     for slot, *_ in SLOTS:
         auto = db.get_bool(f"{slot}_auto_risk", False)
         base = db.get_float(f"{slot}_base_risk_pct", 0.0)
-        note = "  <-- auto risk is ON, so the real size is not this" if auto else ""
+        note = "  <-- auto risk still ON: real size comes from win rate, not this" if auto else ""
         print(f"  {slot}_base_risk_pct = {base}{note}")
     print(f"\n{'risk/trade':>12}{'month':>9}{'year (compounded)':>20}")
     for risk in (0.5, 1.0, 1.5, 2.0):
