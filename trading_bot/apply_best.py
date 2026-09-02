@@ -3,10 +3,18 @@
     .venv/bin/python apply_best.py            # show current vs target, change nothing
     .venv/bin/python apply_best.py --apply    # write the target settings
 
-THE PICK
-    swing = trend, 12h, R:R 1:3
+THE PICKS
+    swing    = trend, 12h, R:R 1:3
         R/month 2.99   PF 1.23   win 35%   n=652   ~7 targets hit per month
         eras 1.22 / 1.11 / 1.53   (all three clear of 1.0, newest strongest)
+    scalping = emastoch, 12h, R:R 1:2
+        R/month 1.55   PF 2.18   win 52%   n=91    ~1.4 targets per month
+        eras 1.49 / 3.39 / 2.30 -- the steadiest region in the whole grid,
+        7 adjacent R:R cells passing across 12h and 1d
+
+    Together: ~22 entries and ~8 targets a month, 37% wins, 4.54 R/month.
+    Different entry logic, so they do not lose together, and engine.py stops
+    either slot stacking onto a symbol the other already holds.
 
 Chosen from the full sweep: 4 strategies x 6 timeframes (30m/1h/4h/6h/12h/1d)
 x 5 R:R = 120 cells, 38 pairs, fees and slippage modelled, gated on a 3-era
@@ -18,16 +26,14 @@ but its neighbours at 1:2 and 1:2.5 both fail and its newest era is 1.24
 against a 1.20 threshold, so it is an isolated cell. trend 12h 1:3 sits on a
 run of three passing R:R values and clears every era by a margin.
 
-EVERYTHING ELSE IS STOPPED
-    scalping_bot_on = 0 stops new scalping entries. Open positions are still
-    managed: engine.py calls position_manager.monitor_all() outside the
-    per-slot loop, so existing trades keep their stops and targets.
-    The scalping slot's own settings are left parked at emastoch 12h 1:2
-    (R/month 1.55, PF 2.18) -- the runner-up, ready if it is ever re-enabled.
+EVERYTHING ELSE IS OFF
+    breakout and reversion are off in both slots. reversion lost all 20
+    timeframe/R:R cells it was tested in -- at 12h 1:1 its profit factor was
+    0.33.
 
-    ai_hybrid stays off in both slots. It short-circuits aggregate_signal,
-    forces in the reversion signal that lost all 20 cells it was tested in,
-    and is the one strategy the sweep never measured.
+    ai_hybrid stays off too. It short-circuits aggregate_signal, forces in
+    that same reversion signal regardless of the toggles, never reaches
+    emastoch at all, and is the one strategy the sweep never measured.
 """
 from __future__ import annotations
 
