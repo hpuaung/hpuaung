@@ -163,6 +163,20 @@ def _engine_mode(strategy):
     return "real" if db.get_setting(f"{strategy}_mode", "paper") == "real" else "paper"
 
 
+def _winrate_floor(strategy, slack=0.8):
+    """Win rate below which a context is a chronic loser, given the slot's R:R.
+
+    The adaptive filters used a flat 35-40%, which silently assumes a system
+    that wins more often than it loses. At 1:3 break-even is 25%, so the chosen
+    trend 12h 1:3 -- designed to win 35% -- sits under a flat floor while being
+    profitable, and each pair would have been switched off as it reached the
+    trade count. Break-even is 100/(1+rr); only a context clearly below that is
+    worth skipping.
+    """
+    rr = db.get_float(f"{strategy}_fixed_rr", 0.0) or 3.0
+    return (100.0 / (1.0 + rr)) * slack
+
+
 def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_mode):
     # Skip if we already hold a position for this symbol+strategy.
     for p in db.get_open_positions(strategy=strategy):
@@ -359,20 +373,33 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
     # trading, these filters and the win model see zero history and never learn.
     _lpm = None if db.get_bool("learn_from_paper", True) else 0
 
+    # Master switch. These filters block entries on their own judgement, and a
+    # blocking rule that turns out to be wrong is expensive to notice — the
+    # correlation cap once starved this bot of every entry for months. One
+    # setting kills all four; every block is logged, so why_stuck.py shows them.
+    _adaptive = db.get_bool("adaptive_filters_on", True)
+
+    # Floor below which a context counts as a chronic loser. A fixed 35-40%
+    # assumes a system that wins more often than it loses. trend 12h at 1:3 is
+    # designed to win 35% — break-even is 25% — so a fixed floor would block
+    # exactly the pairs the strategy is working on, one by one, as each reached
+    # 15 trades. Derive it from the slot's R:R instead.
+    _floor = _winrate_floor(strategy)
+
     # 1. Pair win rate (all directions): if this pair has been a chronic loser
     #    across 15+ trades, skip until the pattern improves.
     wr_pair, n_pair = db.winrate(strategy, symbol, paper_mode=_lpm)
-    if n_pair >= 15 and wr_pair is not None and wr_pair < 40.0:
+    if _adaptive and n_pair >= 15 and wr_pair is not None and wr_pair < _floor:
         db.log_event("WINRATE_SKIP", f"{symbol} {strategy} pair_wr={wr_pair:.0f}% over {n_pair} trades")
         db.log_signal(symbol, triggered or strategy, lgbm_score, news_score, "LOWWR_SKIP")
         return
 
     # 2. Direction-specific win rate: if e.g. SELL on SOLUSDT has lost 10/10
     #    times, stop entering that direction on this pair until history improves.
-    if db.auto_flag(f"{strategy}_dir_filter", True):
+    if _adaptive and db.auto_flag(f"{strategy}_dir_filter", True):
         wr_dir, n_dir = db.winrate(strategy, symbol,
                                    side=signal["signal"], paper_mode=_lpm)
-        if n_dir >= 10 and wr_dir is not None and wr_dir < 35.0:
+        if n_dir >= 10 and wr_dir is not None and wr_dir < _floor:
             db.log_event("DIRWR_SKIP",
                          f"{symbol} {strategy} {signal['signal']} dir_wr={wr_dir:.0f}% over {n_dir} trades")
             db.log_signal(symbol, triggered or strategy, lgbm_score, news_score, "DIRWR_SKIP")
@@ -380,10 +407,10 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
 
     # 3. Hour-of-day win rate: if this UTC hour has historically lost across
     #    10+ real trades for this strategy, wait for a better hour.
-    if db.auto_flag(f"{strategy}_hour_filter", True):
+    if _adaptive and db.auto_flag(f"{strategy}_hour_filter", True):
         cur_hour = datetime.now(timezone.utc).hour
         wr_hour, n_hour = db.winrate_hour(cur_hour, strategy=strategy, paper_mode=_lpm)
-        if n_hour >= 10 and wr_hour is not None and wr_hour < 35.0:
+        if n_hour >= 10 and wr_hour is not None and wr_hour < _floor:
             db.log_event("HOURWR_SKIP",
                          f"{symbol} {strategy} UTC_hour={cur_hour} hour_wr={wr_hour:.0f}% over {n_hour} trades")
             db.log_signal(symbol, triggered or strategy, lgbm_score, news_score, "HOURWR_SKIP")
@@ -391,10 +418,10 @@ def process_pair(symbol, strategy, equity, multiplier, paper_mode, health, api_m
 
     # 4. Session × pair win rate: e.g. ETHUSDT is consistently losing during
     #    the Asian session — skip that combination specifically.
-    if db.auto_flag(f"{strategy}_session_pair_filter", True):
+    if _adaptive and db.auto_flag(f"{strategy}_session_pair_filter", True):
         cur_session = _current_session()
         wr_sess, n_sess = db.winrate_session_pair(cur_session, symbol, strategy=strategy, paper_mode=_lpm)
-        if n_sess >= 8 and wr_sess is not None and wr_sess < 35.0:
+        if n_sess >= 8 and wr_sess is not None and wr_sess < _floor:
             db.log_event("SESSWR_SKIP",
                          f"{symbol} {strategy} session={cur_session} sess_wr={wr_sess:.0f}% over {n_sess} trades")
             db.log_signal(symbol, triggered or strategy, lgbm_score, news_score, "SESSWR_SKIP")

@@ -81,6 +81,18 @@ TARGET = {
     "scalping_auto_be": "0",
     "swing_trail_auto": "0",
     "scalping_trail_auto": "0",
+    # 5. auto_tf overrides the timeframe setting outright (engine.py
+    #    _effective_tfs): with it on, swing trades 1d and scalping trades 5m
+    #    whatever swing_timeframe/scalping_timeframe say. Both slots must be on
+    #    12h for the picks below to be the thing that actually runs.
+    "swing_auto_tf": "0",
+    "scalping_auto_tf": "0",
+    # 6. The adaptive filters skipped any context under a flat 35-40% win rate.
+    #    trend 12h 1:3 is designed to win 35% -- break-even is 25% -- so each
+    #    pair would have been switched off as it reached 15 trades, exactly as
+    #    the strategy started working. The floor now comes from the slot's R:R
+    #    (engine._winrate_floor); this switch turns all four off outright.
+    "adaptive_filters_on": "1",
     # --- fixed risk ----------------------------------------------------------
     # auto_risk ignores base_risk_pct entirely (orders.py:24) and sizes from
     # risk_guard.recommended_risk(), which reads win rate alone and knows
