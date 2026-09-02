@@ -42,6 +42,8 @@ def main() -> int:
                       f"{med:>14}")
         _open_book(slot)
 
+    _provenance()
+
     print("\nHow to read this: if the open swing positions are mostly in profit\n"
           "and none has run long enough to reach 3R yet, the missing winners are\n"
           "still in flight and the closed sample is simply too young. If they are\n"
@@ -49,6 +51,32 @@ def main() -> int:
           "the entries are not behaving like the backtest's and that is the\n"
           "problem to chase -- not the strategy choice.")
     return 0
+
+
+def _provenance() -> None:
+    """Which timeframe and which strategy actually produced these trades.
+
+    The sweep measured trend at 12h, where the median hold is 13.5 days. If
+    the live stops were being hit in 1.4 days the trades may simply not have
+    been taken on 12h -- these columns say so instead of leaving it to guesswork.
+    """
+    try:
+        rows = db.get_conn().execute(
+            "SELECT strategy, COALESCE(NULLIF(timeframe,''),'(not recorded)') tf, "
+            "COALESCE(NULLIF(strategy_name,''),'(not recorded)') name, "
+            "COUNT(*) n, SUM(net_pnl) total FROM trades "
+            "GROUP BY strategy, tf, name ORDER BY n DESC").fetchall()
+    except Exception as e:  # noqa: BLE001  (columns predate the migration)
+        print(f"\nprovenance unavailable: {e}")
+        return
+    print(f"\n=== what actually produced these trades ===")
+    print(f"{'slot':11}{'timeframe':16}{'strategy':18}{'n':>5}{'total':>10}")
+    for r in rows:
+        print(f"{(r['strategy'] or '?'):11}{r['tf']:16}{r['name']:18}"
+              f"{r['n']:>5}{(r['total'] or 0):>+10.2f}")
+    print(f"\nmtf_filter: swing={db.get_bool('swing_mtf_filter', True)}, "
+          f"scalping={db.get_bool('scalping_mtf_filter', True)}"
+          "   (the sweep ran with mtf=False)")
 
 
 def _open_book(slot: str) -> None:
