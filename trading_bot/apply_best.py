@@ -20,6 +20,13 @@ import sys
 import database as db
 
 TARGET = {
+    # ai_hybrid short-circuits aggregate_signal (engine.py:80): when it is on it
+    # runs trend+reversion+breakout itself, ignores every per-strategy toggle,
+    # and never reaches emastoch at all. It defaults to ON, it forces in the
+    # reversion signal that lost all 20 cells of the sweep, and it is the one
+    # strategy the sweep never measured. Off in both slots until it is tested.
+    "swing_hybrid_on": "0",
+    "scalping_hybrid_on": "0",
     # swing slot -- already correct, listed so the whole picture is visible
     "swing_timeframe": "12h",
     "swing_trend_on": "1",
